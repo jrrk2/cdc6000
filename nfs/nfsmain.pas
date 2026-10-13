@@ -2,7 +2,7 @@
 BEGIN
    IF NOT INITED THEN
    BEGIN
-      INITED := TRUE;  XID := 5329152;  SPIN := 0;  CONSOLE := 0;  EDITED := 0;  INITTABLES;  INITCMDS;
+      INITED := TRUE;  XID := 5329152;  SPIN := 0;  CONSOLE := 0;  EDITED := 0;  LBASEN := 0;  INITTABLES;  INITCMDS;
       IF REG[9] MOD 128 <> 0 THEN SRVIP[3] := REG[9] MOD 128;   (* DIP switches 0-6: the server's host number *)
       NETOK := NETSTART(0)
    END;
@@ -29,7 +29,11 @@ BEGIN
             1: MB.RES := GETCH(CS);
             2: IF PUTBYTE(CS, TOASC[MB.ARG]) THEN MB.RES := 0;
             3: IF PUTWORD(CS) THEN MB.RES := 0;
-            4: IF SKIND[CS] = 1 THEN BEGIN MB.RES := 0;  SKIND[CS] := 0 END      (* a file being read: just let go *)
+            4: IF SKIND[CS] = 1 THEN
+               BEGIN
+                  MB.RES := 0;  SKIND[CS] := 0;                         (* a file being read: just let go *)
+                  IF (CONSOLE = 1) AND (MB.NAME = NPASCLGO) THEN BASEN := 0      (* the program has been read: its files are its own *)
+               END
                ELSE IF WRITEPIECE(CS) THEN BEGIN MB.RES := 0;  SKIND[CS] := 0 END
          END
    END

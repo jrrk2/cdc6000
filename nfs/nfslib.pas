@@ -56,7 +56,7 @@ VAR MEM : ARRAY [0..38911] OF INTEGER;     (* absolute memory 2048 .. 40959, the
    CWDFH : BYTES;  CWDL : INTEGER;         (* the shell's current directory *)
    CWDP : ARRAY [0..127] OF INTEGER;  CWDPN : INTEGER;     (* and its path, for pwd *)
    FDIR : BYTES;  FDL : INTEGER;           (* the directory of the first name of ren *)
-   BASE : ARRAY [0..47] OF INTEGER;  BASEN : INTEGER;      (* compile: the source's base name (none: input, output ...) *)
+   BASE, LBASE : ARRAY [0..47] OF INTEGER;  BASEN, LBASEN : INTEGER;   (* LBASE: the base of the last compile, for run *)      (* compile: the source's base name (none: input, output ...) *)
    PIMG, NINPUT, NOUTPUT, NPASCLGO, NPMDFILE : ALFA;       (* logical file names the run time uses *)
    LINE : ARRAY [0..127] OF INTEGER;  LN : INTEGER;        (* the shell's command line *)
    TS, TL : ARRAY [0..3] OF INTEGER;  NT : INTEGER;        (* its words: start, length *)

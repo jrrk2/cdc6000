@@ -542,6 +542,8 @@ BEGIN
       FOR K := 0 TO L - 1 DO BASE[K] := LINE[S + K];
       BASEN := L
    END;
+   FOR K := 0 TO BASEN - 1 DO LBASE[K] := BASE[K];
+   LBASEN := BASEN;
    COPYFH(DIRFH, DIRL, CWDFH, CWDL);
    IF BASEN > 0 THEN SETNMBASE(112, 97, 115)
    ELSE BEGIN NM[0] := 105;  NM[1] := 110;  NM[2] := 112;  NM[3] := 117;  NM[4] := 116;  NMN := 5 END;
@@ -613,6 +615,7 @@ BEGIN
 END;
 
 PROCEDURE DORUN;
+VAR K : INTEGER;
 BEGIN
    IF NCOMP = 0 THEN SAY('compile first\n')
    ELSE IF MB.PL[0] <> 2048 THEN SAY('the last compile did not finish\n')
@@ -620,6 +623,8 @@ BEGIN
    ELSE
    BEGIN
       SAY('running ...\n');
+      FOR K := 0 TO LBASEN - 1 DO BASE[K] := LBASE[K];
+      BASEN := LBASEN;                         (* the code file is name.cdc; the run time lets go of the name when it has read it *)
       CONSOLE := 1;  AFTERC := 2;  MB.RES := 3;  LEAVE := 1
    END
 END;
