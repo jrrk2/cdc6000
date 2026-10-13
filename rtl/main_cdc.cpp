@@ -36,7 +36,7 @@ static void load_into(VTOP *top, const char *f, void (*tick)(void))
     top->load_we = 0;
 }
 
-static int regdump;
+static int regdump, perf;
 static VTOP *top;
 static VerilatedContext *ctx;
 static void tick(void)
@@ -66,6 +66,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-D")) nm_dip = atoi(argv[a + 1]);
         else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
         else if (!strcmp(argv[a], "-R")) { regdump = 1; a--; }
+        else if (!strcmp(argv[a], "-P")) { perf = 1; a--; }
     }
     top = new VTOP(ctx);
     top->reset = 1; top->load_we = 0; top->rx_valid = 0; top->tx_ready = 1; top->fo_ready = 1;
@@ -116,6 +117,18 @@ int main(int argc, char **argv)
             printf("X%d=%020llo A%d=%06o B%d=%06o\n", q, xv, q, av, q, bv);
         }
     }
+#ifdef CORE_SB
+    if (perf) {
+        static const char *nm[14] = {"cycles", "issued", "decode register empty", "held for a branch", "unit busy", "destination reserved",
+            "no tag", "memory queue full", "waiting to drain", "redirects", "decode waited for a word", "empty within 3 cycles of a redirect",
+            "memory head waits for its address", "memory head waits for store data"};
+        for (int q = 0; q < 14; q++) {
+            uint32_t v = 0;
+            for (int w = 0; w < 32; w++) v |= ((top->dbg_perf[(32 * q + w) / 32] >> ((32 * q + w) % 32)) & 1) << w;
+            fprintf(stderr, "  %-38s %10u\n", nm[q], v);
+        }
+    }
+#endif
     io_closeall();
     fprintf(stderr, "[halt after %llu instructions, %lld cycles%s]\n", (unsigned long long)top->icount, cycles,
             top->fault ? ", FAULT" : "");

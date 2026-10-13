@@ -84,6 +84,7 @@ int main(int argc, char **argv)
 {
     unsigned char rec[4];
     long long n = 0, cyc_seq = 0, cyc_fe = 0, c[NU] = {0}, nloads = 0, nstores = 0, nbr = 0, ntaken = 0, nwords = 0, nfp = 0, ndiv = 0;
+    int lastu[NREG] = {0}; long long waw_by[NU + 1] = {0};
     long long st_unit = 0, st_waw = 0, st_br = 0, st_raw = 0, st_war = 0;
     long long rdy[NREG] = {0}, wrdone[NREG] = {0}, rdtime[NREG] = {0};
     long long ufree[NU][4] = {{0}}, prevstart = 0;
@@ -147,7 +148,7 @@ int main(int argc, char **argv)
           if (ufree[t.unit][best] > tissue) { st_unit += ufree[t.unit][best] - tissue; tissue = ufree[t.unit][best]; }
           u = best; }
         /* the destination must not be reserved by a result that has not been written (write after write) */
-        for (q = 0; q < t.nd; q++) if (t.d[q] != B(0) && wrdone[t.d[q]] > tissue) { st_waw += wrdone[t.d[q]] - tissue; tissue = wrdone[t.d[q]]; }
+        for (q = 0; q < t.nd; q++) if (t.d[q] != B(0) && wrdone[t.d[q]] > tissue) { st_waw += wrdone[t.d[q]] - tissue; waw_by[lastu[t.d[q]]] += wrdone[t.d[q]] - tissue; tissue = wrdone[t.d[q]]; }
         if (tissue != cycle_of_issue) { cycle_of_issue = tissue; issued_now = 0; }
         issued_now++;
         /* inorder=1: a plain pipeline without a scoreboard -- no issue before the operands exist, and execution in order */
@@ -167,7 +168,7 @@ int main(int argc, char **argv)
             int r = t.d[q]; long long when = comp;
             if (r < 8 && t.load) when = comp + memlat;              /* the X register of a load is written after the memory read */
             if (r == B(0)) continue;
-            rdy[r] = when + fwd; wrdone[r] = when;
+            rdy[r] = when + fwd; wrdone[r] = when; lastu[r] = (r < 8 && t.load) ? NU : t.unit;
         }
         ufree[t.unit][u] = (cfg[t.unit].busy == 1) ? tstart + 1 : tstart + cfg[t.unit].busy;
         if (t.unit == U_DIV || cfg[t.unit].busy >= cfg[t.unit].lat) ufree[t.unit][u] = comp;
@@ -188,6 +189,7 @@ int main(int argc, char **argv)
     if (mode_sb) {
         printf("scoreboard model: %lld cycles, %.3f per instruction (IPC %.3f), speed-up %.2fx over the present core\n",
                end, (double)end / n, (double)n / end, (double)cyc_seq / end);
+        printf("destination reserved, by the unit that holds it:"); for (a = 0; a <= NU; a++) if (waw_by[a]) printf("  %s %lld", a == NU ? "load" : uname[a], waw_by[a]); printf("\n");
         printf("issue delays (cycles summed): fetch/branch %lld  unit busy %lld  dest reserved (WAW) %lld   waiting for operands %lld   result held (WAR) %lld\n",
                st_br, st_unit, st_waw, st_raw, st_war);
     }

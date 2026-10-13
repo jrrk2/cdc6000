@@ -34,7 +34,9 @@ module cdc6000_sb #(
     parameter int LAT_MUL = 1,
     parameter int LAT_INC = 1,
     parameter int MEMLAT = 1,         // 1: the word read is on the bus the cycle after the request; 2: one register more
-    parameter int HALT_WAIT = 80      // cycles that older instructions get to finish after the store that halts
+    parameter int HALT_WAIT = 80,     // cycles that older instructions get to finish after the store that halts
+    parameter bit AGEN = 1'b1,        // work out the address of a load or store at issue when the operands are there
+    parameter bit RELAX_WAW = 1'b1    // 1: an instruction may issue while its destination is reserved (the newer tag takes over); 0: it waits, as on the original
 ) (
     input logic clk,
     input logic reset,
@@ -79,7 +81,8 @@ module cdc6000_sb #(
     output logic [63:0]  icount,
     output logic [479:0] dbg_x,
     output logic [143:0] dbg_a,
-    output logic [143:0] dbg_b
+    output logic [143:0] dbg_b,
+    output logic [511:0] dbg_perf       // 16 counters of 32 bits: see the always_ff below
 );
   import cdc_pkg::*;
 
@@ -296,6 +299,7 @@ module cdc6000_sb #(
   logic [2:0]        dr_i, dr_j, dr_k;
   logic [17:0]       dr_K;
   logic [4:0]        dr_ns;
+  logic [1:0]        dr_s;                              // the parcel it came from (for the trace)
   logic              dr_bad;                            // a 30 bit instruction in the last parcel
 
   // data written into memory this cycle (keeps the instruction stack right)
@@ -309,16 +313,25 @@ module cdc6000_sb #(
 
   logic [MEM_AW-1:0] dpa;
   assign dpa = dp_w[MEM_AW-1:0];
-  assign iaddr = (boot == 3'd4 && want_v) ? dpa + MEM_AW'(want_n) : dpa;
+  assign iaddr = (boot == 3'd4 && want_v) ? want_a : dpa;
+  logic [$clog2(NSK)-1:0] fill_i;                   // the entry that the word on its way replaces: the next one, but not the word being decoded
+  always_comb begin
+    fill_i = sk_wp;
+    if (sk_v[sk_wp] && sk_a[sk_wp] == dpa) fill_i = sk_wp + 1'b1;
+  end
   logic [59:0] ret_data;
   assign ret_data = (st_v && st_a == f_a) ? st_d : irdata;
 
   logic [NSK-1:0] hit_n;
   logic [59:0] dw;
   logic dec_hit;
-  logic [3:0] present;
-  logic [1:0] want_n;
+  logic [4:0] present;
+  logic [MEM_AW-1:0] want_a;
   logic want_v;
+  logic [MEM_AW-1:0] pf_a[0:4];
+  logic pf_c[0:4];
+  logic [MEM_AW-1:0] pf_tgt;
+  logic pf_tv;
   always_comb begin
     dw = 60'd0;
     for (int n = 0; n < NSK; n++) begin
@@ -329,16 +342,18 @@ module cdc6000_sb #(
       dw = ret_data;
       dec_hit = 1'b1;
     end else dec_hit = |hit_n;
-    // prefetch: the first of the next four words that is neither in the stack nor on its way
-    for (int q = 0; q < 4; q++) begin
+    // prefetch candidates in order: the word being decoded, the target of a branch waiting in the decode register, the next three words
+    pf_a[0] = dpa; pf_a[1] = pf_tgt; pf_a[2] = dpa + MEM_AW'(1); pf_a[3] = dpa + MEM_AW'(2); pf_a[4] = dpa + MEM_AW'(3);
+    pf_c[0] = 1'b1; pf_c[1] = pf_tv; pf_c[2] = 1'b1; pf_c[3] = 1'b1; pf_c[4] = 1'b1;
+    for (int q = 0; q < 5; q++) begin
       logic inst;
       inst = 1'b0;
-      for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == dpa + MEM_AW'(q)) inst = 1'b1;
-      if (f_v && !f_drop && f_a == dpa + MEM_AW'(q)) inst = 1'b1;
-      present[q] = inst;
+      for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == pf_a[q]) inst = 1'b1;
+      if (f_v && !f_drop && f_a == pf_a[q]) inst = 1'b1;
+      present[q] = inst || !pf_c[q];
     end
-    want_v = 1'b0; want_n = 2'd0;
-    for (int q = 3; q >= 0; q--) if (!present[q]) begin want_v = 1'b1; want_n = q[1:0]; end
+    want_v = 1'b0; want_a = dpa;
+    for (int q = 4; q >= 0; q--) if (!present[q]) begin want_v = 1'b1; want_a = pf_a[q]; end
   end
 
   // decode: skip the no-operations, find the instruction
@@ -369,6 +384,14 @@ module cdc6000_sb #(
   end
 
   // ------------------------------------------------------------------ issue
+  // the place a branch in the decode register goes to, when it is known
+  always_comb begin
+    pf_tv = 1'b0; pf_tgt = '0;
+    if (dr_v && !dr_bad) begin
+      if (dr_f == 6'o01) begin pf_tv = 1'b1; pf_tgt = MEM_AW'(dr_K + 18'd1); end
+      else if (dr_f == 6'o03 || (dr_f >= 6'o04 && dr_f <= 6'o07) || (dr_f == 6'o02 && dr_i == 3'd0)) begin pf_tv = 1'b1; pf_tgt = MEM_AW'(dr_K); end
+    end
+  end
   dec_t D;
   dec_t Dbad;
   always_comb begin
@@ -466,7 +489,7 @@ module cdc6000_sb #(
   always_comb begin
     unit_ok = 1'b0; sel_u = 5'd0;
     case (D.uk)
-      UK_BR: begin unit_ok = accept[U_BR]; sel_u = U_BR; end
+      UK_BR: begin unit_ok = br_early || accept[U_BR]; sel_u = U_BR; end
       UK_BOOL: begin unit_ok = accept[U_BOOL]; sel_u = U_BOOL; end
       UK_SHIFT: begin unit_ok = accept[U_SHIFT]; sel_u = U_SHIFT; end
       UK_LADD: begin unit_ok = accept[U_LADD]; sel_u = U_LADD; end
@@ -478,11 +501,30 @@ module cdc6000_sb #(
       end
       default: unit_ok = 1'b1;
     endcase
-    dest_ok = (!D.d0v || !rsv_v[D.d0r]) && (!D.d1v || !rsv_v[D.d1r]) && (!D.mld || !rsv_v[rx_(dr_i)]);
+    dest_ok = RELAX_WAW || ((!D.d0v || !rsv_v[D.d0r]) && (!D.d1v || !rsv_v[D.d1r]) && (!D.mld || !rsv_v[rx_(dr_i)]));
     need_tag = D.d0v || D.d1v || D.mld;
     need_mq = D.mld || D.mst || D.rj;
     mq_ok = !need_mq || (mq_n < 3'd4);
     sp_ok = !D.special || drained;
+  end
+
+  // early resolution: a conditional branch (or JP B) whose operands are not reserved is decided at issue; otherwise the branch unit waits for them
+  logic        br_early, br_e_tk;
+  logic [17:0] br_e_tgt;
+  logic signed [18:0] ebva, ebvb;
+  always_comb begin
+    br_early = (D.uk == UK_BR) && !(D.s0v && rsv_v[D.s0r]) && !(D.s1v && rsv_v[D.s1r]);
+    ebva = sb18(o_v[0][17:0]); ebvb = sb18(o_v[1][17:0]);
+    br_e_tk = 1'b0; br_e_tgt = dr_K;
+    case (dr_f)
+      6'o02: begin br_e_tk = 1'b1; br_e_tgt = dr_K + o_v[0][17:0]; end
+      6'o03: br_e_tk = cond(dr_i, o_v[0]);
+      6'o04: br_e_tk = (ebva == ebvb);
+      6'o05: br_e_tk = (ebva != ebvb);
+      6'o06: br_e_tk = (ebva >= ebvb);
+      6'o07: br_e_tk = (ebva < ebvb);
+      default: ;
+    endcase
   end
 
   assign hold = br_pend || halt_req || halted;
@@ -495,6 +537,7 @@ module cdc6000_sb #(
     jump_now = 1'b0; jump_t = 18'd0;
     if (issue_fire && D.rj) begin jump_now = 1'b1; jump_t = dr_K + 18'd1; end
     if (issue_fire && D.jimm) begin jump_now = 1'b1; jump_t = dr_K; end
+    if (issue_fire && br_early && br_e_tk) begin jump_now = 1'b1; jump_t = br_e_tgt; end
   end
 
   // ------------------------------------------------------------------ units: execution
@@ -559,6 +602,20 @@ module cdc6000_sb #(
         default: inc_s[u] = add18(neg18(s1_18), s0_18);
       endcase
     end
+  end
+
+  // the address of a load or store, worked out at issue when its operands are there: the memory queue then does not wait for the increment unit
+  logic [17:0] ag_sum;
+  logic        ag_ok;
+  always_comb begin
+    logic [17:0] k18, a0, a1;
+    k18 = dr_K; a0 = o_v[0][17:0]; a1 = o_v[1][17:0];
+    case (dr_f[2:0])
+      3'd0, 3'd1, 3'd2: ag_sum = add18(k18, a0);
+      3'd3, 3'd4, 3'd6: ag_sum = add18(a1, a0);
+      3'd5, 3'd7: ag_sum = add18(neg18(a1), a0);
+    endcase
+    ag_ok = AGEN && (D.mld || D.mst) && !o_w[0] && !o_w[1];
   end
 
   // branch unit
@@ -811,18 +868,15 @@ module cdc6000_sb #(
 
       // ---- instruction fetch: the word that came, then a new request
       if (f_v && !f_drop) begin
-        logic [$clog2(NSK)-1:0] vi;
-        vi = sk_wp;
-        if (sk_v[vi] && sk_a[vi] == dpa) vi = sk_wp + 1'b1;
-        sk_d[vi] <= ret_data; sk_a[vi] <= f_a; sk_v[vi] <= 1'b1;
-        sk_wp <= vi + 1'b1;
+        sk_d[fill_i] <= ret_data; sk_a[fill_i] <= f_a; sk_v[fill_i] <= 1'b1;
+        sk_wp <= fill_i + 1'b1;
       end
-      // a store into a word of the stack: write through
-      if (st_v) for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == st_a) sk_d[n] <= st_d;
+      // a store into a word of the stack: write through (not into the entry that is being replaced this cycle: ret_data has the store)
+      if (st_v) for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == st_a && !(f_v && !f_drop && n == int'(fill_i))) sk_d[n] <= st_d;
       f_v <= 1'b0; f_drop <= 1'b0;
       if (boot == 3'd4 && want_v) begin
-        f_v <= 1'b1; f_a <= dpa + MEM_AW'(want_n);
-        f_drop <= st_v && (st_a == dpa + MEM_AW'(want_n));
+        f_v <= 1'b1; f_a <= want_a;
+        f_drop <= st_v && (st_a == want_a);
       end
 
       // ---- decode into the decode register
@@ -832,7 +886,7 @@ module cdc6000_sb #(
         dr_v <= 1'b0;
         if (boot == 3'd4 && dec_hit) begin
           if (found) begin
-            dr_v <= 1'b1; dr_w <= dp_w; dr_f <= pf0; dr_i <= pc0[8:6]; dr_j <= pc0[5:3]; dr_k <= pc0[2:0];
+            dr_v <= 1'b1; dr_w <= dp_w; dr_s <= spos[1:0]; dr_f <= pf0; dr_i <= pc0[8:6]; dr_j <= pc0[5:3]; dr_k <= pc0[2:0];
             dr_K <= {pc0[2:0], pc1}; dr_ns <= dp_nskip + skipc; dr_bad <= pl && (spos == 3'd3);
             dp_nskip <= 5'd0;
           end else dp_nskip <= dp_nskip + skipc;
@@ -841,6 +895,13 @@ module cdc6000_sb #(
         end
       end else if (issue_fire) dr_v <= 1'b0;
 
+      // ---- registers and reservations
+      for (int r = 0; r < 24; r++) if (rw_v[r]) begin
+        rsv_v[r] <= 1'b0;
+        if (r < 8) xr[r] <= rw_d[r];
+        else if (r < 16) ar[r-8] <= rw_d[r][17:0];
+        else if (r != 16) br[r-16] <= rw_d[r][17:0];
+      end
       // ---- units: operand capture, launch
       for (int u = 0; u < NU; u++) begin
         if (e_v[u]) begin
@@ -866,20 +927,20 @@ module cdc6000_sb #(
           if (D.mld) begin rsv_v[rx_(dr_i)] <= 1'b1; rsv_t[rx_(dr_i)] <= {new_tag, 1'b1}; end
         end
         // into a unit
-        if (D.uk != UK_NONE) begin
+        if (D.uk != UK_NONE && !br_early) begin
           e_v[sel_u] <= 1'b1;
           e_f[sel_u] <= dr_f; e_ijk[sel_u] <= {dr_i, dr_j, dr_k}; e_K[sel_u] <= dr_K; e_tag[sel_u] <= new_tag;
           e_d0v[sel_u] <= D.d0v; e_d1v[sel_u] <= D.d1v;
           e_s0[sel_u] <= o_v[0]; e_w0[sel_u] <= o_w[0]; e_t0[sel_u] <= o_t[0];
           e_s1[sel_u] <= o_v[1]; e_w1[sel_u] <= o_w[1]; e_t1[sel_u] <= o_t[1];
-          e_mf[sel_u] <= D.mld || D.mst; e_mq[sel_u] <= mq_tail;
+          e_mf[sel_u] <= (D.mld || D.mst) && !ag_ok; e_mq[sel_u] <= mq_tail;
           e_wd[sel_u] <= dr_w;
           if (D.uk == UK_BR) br_pend <= 1'b1;
         end
         // the memory queue
         if (need_mq) begin
           mq_v[mq_tail] <= 1'b1; mq_st[mq_tail] <= D.mst || D.rj;
-          mq_av[mq_tail] <= D.rj; mq_a[mq_tail] <= dr_K;
+          mq_av[mq_tail] <= D.rj || ag_ok; mq_a[mq_tail] <= ag_ok ? ag_sum : dr_K;
           mq_rt[mq_tail] <= {new_tag, 1'b1};
           if (D.rj) begin
             mq_dv[mq_tail] <= 1'b1; mq_dw[mq_tail] <= 1'b0;
@@ -928,13 +989,6 @@ module cdc6000_sb #(
         br_pend <= 1'b0;
       end
 
-      // ---- registers and reservations
-      for (int r = 0; r < 24; r++) if (rw_v[r]) begin
-        rsv_v[r] <= 1'b0;
-        if (r < 8) xr[r] <= rw_d[r];
-        else if (r < 16) ar[r-8] <= rw_d[r][17:0];
-        else if (r != 16) br[r-16] <= rw_d[r][17:0];
-      end
       // tags are given back when their results are on the bus
       for (int b = 0; b < NB; b++) if (rb_v[b]) begin
         tag_pend[rb_t[b][4:1]][rb_t[b][0]] <= 1'b0;
@@ -965,12 +1019,52 @@ module cdc6000_sb #(
     if (launch[U_BR] && br_taken) begin redirect_v = 1'b1; redirect_t = br_tgt; end
   end
 
+  // ---- performance counters (not used on the board: the tools remove them)
+  //  0 cycles   1 issued   2 decode register empty   3 held for a branch   4 unit busy   5 destination reserved   6 no tag
+  //  7 memory queue full   8 waiting for drain   9 taken-branch redirects   10 stack misses (decode waited for a word)
+  //  11 instructions issued after a redirect within 3 cycles   12 memory head blocked: no address yet  13 head waits for data
+  logic [31:0] pc_[0:15];
+  logic [2:0]  since_rd;
+  always_ff @(posedge clk) begin
+    if (reset) begin for (int q = 0; q < 16; q++) pc_[q] <= 32'd0; since_rd <= 3'd7; end
+    else if (boot == 3'd4 && !halted) begin
+      pc_[0] <= pc_[0] + 1;
+      if (issue_fire) pc_[1] <= pc_[1] + 1;
+      if (!dr_v) pc_[2] <= pc_[2] + 1;
+      else if (!issue_fire) begin
+        if (br_pend) pc_[3] <= pc_[3] + 1;
+        else if (!unit_ok) pc_[4] <= pc_[4] + 1;
+        else if (!dest_ok) pc_[5] <= pc_[5] + 1;
+        else if (need_tag && !tag_ok) pc_[6] <= pc_[6] + 1;
+        else if (!mq_ok) pc_[7] <= pc_[7] + 1;
+        else if (!sp_ok) pc_[8] <= pc_[8] + 1;
+      end
+      if (redirect_v) pc_[9] <= pc_[9] + 1;
+      if (!dr_v && !dec_hit) pc_[10] <= pc_[10] + 1;
+      since_rd <= redirect_v ? 3'd0 : (since_rd == 3'd7 ? 3'd7 : since_rd + 3'd1);
+      if (!dr_v && since_rd < 3'd4) pc_[11] <= pc_[11] + 1;
+      if (mq_v[mq_head] && !mq_av[mq_head]) pc_[12] <= pc_[12] + 1;
+      if (mq_v[mq_head] && mq_av[mq_head] && mq_st[mq_head] && !mq_dv[mq_head]) pc_[13] <= pc_[13] + 1;
+    end
+  end
+  always_comb begin
+    for (int q = 0; q < 16; q++) dbg_perf[32*q +: 32] = pc_[q];
+  end
+
   assign dbg_pc = dp_w;
   always_comb begin
     for (int q = 0; q < 8; q++) begin
       dbg_x[60*q +: 60] = xr[q]; dbg_a[18*q +: 18] = ar[q]; dbg_b[18*q +: 18] = br[q];
     end
   end
+`ifndef SYNTHESIS
+  // +trace: one line per issued instruction, "P/slot", as cdcemu -t and the sequential core print (no-operations are not issued)
+  logic trace_en;
+  initial trace_en = $test$plusargs("trace");
+  always @(posedge clk) if (!reset && trace_en && issue_fire) $display("T %o/%0d", dr_w, dr_s);
+  always @(posedge clk) if (!reset && trace_en && st_v) $display("S %o <= %020o  (f_v=%b f_a=%o)", st_a, st_d, f_v, f_a);
+  always @(posedge clk) if (!reset && trace_en && redirect_v) $display("R %o jump_now=%b br_early=%b launchBR=%b taken=%b e_f=%o dr_f=%o dr_K=%o rj=%b jimm=%b early_tk=%b", redirect_t, jump_now, br_early, launch[U_BR], br_taken, e_f[U_BR], dr_f, dr_K, D.rj, D.jimm, br_e_tk);
+`endif
 endmodule
 
 

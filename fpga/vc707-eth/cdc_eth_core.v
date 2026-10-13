@@ -163,7 +163,7 @@ module cdc_eth_core #(
 			.dev_req(dev_req), .dev_we(dev_we), .dev_off(dev_off), .dev_wdata(dev_wdata),
 			.dev_ack(dev_ack), .dev_rdata(dev_rdata),
 			.halted(halted), .fault(fault), .dbg_pc(dbg_pc), .icount(icount),
-			.dbg_x(dbg_x), .dbg_a(dbg_a), .dbg_b(dbg_b));
+			.dbg_x(dbg_x), .dbg_a(dbg_a), .dbg_b(dbg_b), .dbg_perf());
 	end else begin : g_seq
 		assign ext_iaddr = 16'd0;
 		cdc6000_core #(.MEM_AW(16), .EXT_MEM(1'b1)) core (
