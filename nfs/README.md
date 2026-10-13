@@ -42,6 +42,7 @@ core: `dir`, `more`/`cat`, `cd`, `pwd`, `copy`, `ren`, `del`, `mkdir`, `rmdir`, 
 `compile [name]`, which compiles `name.pas` to `name.lst`, `name.cdc`, `name.pmd` (without a name: `input` to `output`,
 `pasclgo`, `pmdfile`) and then reports the number of error lines in the listing.
 
+* `bench` times a sieve and an arithmetic loop (ms); `compile` ends with its elapsed time in ms (millisecond register `REG[6]`).
 * Paths are relative to the current directory; `/` is the export.  Output from the compiler stays in the current directory.
 * The first `compile` runs the compiler as loaded.  Every later one clears the compiler's memory and reads its image again
   from the file `pascimg` in the export root (`mkimage_shell.sh` writes it next to `mem.hex`; copy it to the export).
@@ -70,3 +71,19 @@ it.  `run n` also stores n in the cell ICO+1 (word 2049) before the start.  That
 programs it makes, and `pasclgo2img.py --compiler` sets it to 2048 in the image of the compiler; a compiler that was itself made by
 `compile pascal` needs `run 2048` for the same.  For any other program word 2049 is just its first variable, so it is not touched.
 (Without clearing, and without n, the cell kept a stale 2048 from earlier activity, and the listing began at 004001 by accident.)
+
+## Building and loading the board image
+
+```
+fpga/vc707-eth/mkimage_shell.sh DIR          # memory image: DIR/mem.hex, cdc_ram_bram.v, pascimg (copy pascimg to the export)
+# full build (about 40 minutes), from DIR as the work directory, Vivado's settings64.sh sourced:
+VM_DEFS="CORE_SB=1 SYS_DIV=10.000 CLK_HZ=100000000" vivado -mode batch -source fpga/vc707-eth/build.tcl   # scoreboarded core, 100 MHz
+vivado -mode batch -source fpga/vc707-eth/build.tcl                                                     # sequential core, 50 MHz
+# a software-only change afterwards (15 s, no place and route):
+fpga/vc707-eth/updatemem.sh IMGDIR BUILDDIR  # writes IMGDIR/vc707_cdc_eth.bit
+openFPGALoader --cable digilent --freq 15000000 IMGDIR/vc707_cdc_eth.bit
+picocom -b 115200 /dev/ttyUSB2
+```
+
+The board is 192.168.1.77 (static; DHCP otherwise) and DIP switches 0-6 give the server's host number (0: 192.168.1.109);
+DIP switch 7 up selects the static address.

@@ -16,6 +16,29 @@ OCaml bytecode core in `template/` (single FSM, synchronous memory, load port wh
 Untested: synthesis (no yosys/Vivado run yet), the memory-mapped I/O behind a real UART, backpressure
 (`tx_ready`/`fo_ready` are tied high in the harness).
 
+## The scoreboarded core and performance
+
+`cdc6000_sb.sv` is a second core with the same instruction set and the same ports: an instruction stack, in-order issue,
+a scoreboard (reservations and operand capture from the result buses), separate units (boolean, shift, long add, floating add,
+multiply, divide, normalise, increment, branch), an ordered memory queue and a branch history table.  Design and
+measurements: `SUPERSCALAR.md`.  `make sb` builds `obj_dir_sb/Vcdc6000_sb`; `../tests/sbregress.sh` is the full regression
+(random programs against the C model, unit-count variants, floating point, the compiler fixed point, the NFS self-compile).
+On the board `build.tcl` selects it with `VM_DEFS="CORE_SB=1 SYS_DIV=10.000 CLK_HZ=100000000"` (100 MHz, WNS +0.18 ns).
+
+Measured on the VC707 (`bench` and `compile pascal` in the shell, times in ms; the compile is the 1972 compiler compiling its
+own source with all run time checks on -- the compiler has no optimiser):
+
+| | sequential core, 50 MHz | scoreboarded core, 100 MHz | speed-up |
+|---|---|---|---|
+| `bench` sieve, 20 x 1000 | 70 | 18 | 3.9x |
+| `bench` arithmetic loop (200000 DIV/MOD) | 692 | 328 | 2.1x |
+| `compile pascal` (includes NFS transfers) | 12359 | 4752 | 2.6x |
+| cycles per instruction (simulated self-compile) | 2.12 | 1.13 | 1.9x |
+| cycles, self-compile of the compiler | 73.8 M | 42.4 M | 1.74x |
+| LUTs | ~10 K | ~26 K | |
+
+The arithmetic loop gains only the clock: the divide unit takes the same number of cycles on both cores.
+
 ## Device bus and the Ethernet board
 Loads and stores to 120000B..+4111 leave the core on `dev_req/dev_we/dev_off/dev_wdata`, `dev_ack/dev_rdata` (state `S_DEV`).
 `../fpga/vc707-eth/cdc_eth_core.v` answers them with the ethmin packet windows and registers; `../nfs/netmodel.h` answers them
