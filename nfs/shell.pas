@@ -559,7 +559,7 @@ BEGIN
       END;
       IF OK THEN
       BEGIN
-         NCOMP := NCOMP + 1;  AFTERC := 1;  MB.RES := 1;  LEAVE := 1;  EDITED := 0;
+         TSTART := REG[6];  NCOMP := NCOMP + 1;  AFTERC := 1;  MB.RES := 1;  LEAVE := 1;  EDITED := 0;
          SAY('compiling ...\n')
       END
       ELSE SAY('the file pascimg (the compiler image) is missing in the export\n')
@@ -591,7 +591,7 @@ BEGIN
          END
       UNTIL B < 0;
       SKIND[3] := 0;
-      SAY('compile finished, ');  SAYN(ERRS);  SAY(' error line(s) in the listing');
+      SAY('compile finished, ');  SAYN(ERRS);  SAY(' error line(s) in the listing, ');  SAYN(REG[6] - TSTART);  SAY(' ms');
       IF (MB.PL[0] = 2048) AND (MB.PL[1] = 0) THEN SAY(', type run\n') ELSE CRLF
    END
    ELSE SAY('compile finished, no listing\n')
@@ -644,6 +644,7 @@ BEGIN
    SAY('cd [path], pwd     change and show the directory\n');
    SAY('compile [name]     compile name.pas to name.lst, name.cdc, name.pmd\n');
    SAY('                   (no name: input to output, pasclgo, pmdfile)\n');
+   SAY('bench             time a sieve and an arithmetic loop (ms)\n');
    SAY('edit file          full screen editor (^S save, ^X leave)\n');
    SAY('run [n]            run the program compile has just made (screen and keyboard are its output and input);\n');
    SAY('                   run 2048 for the compiler itself: n goes into the cell its listing starts from\n');
@@ -661,12 +662,35 @@ BEGIN
    ELSE SAY('static address (DIP switch 7)\n')
 END;
 
+PROCEDURE DOBENCH;                             (* an integer benchmark: sieve of Eratosthenes 20 times, then a loop of divisions *)
+VAR S : ARRAY [0..999] OF INTEGER;  I, J, R, C, T0, T1, T2, ACC : INTEGER;
+BEGIN
+   T0 := REG[6];  C := 0;
+   FOR R := 1 TO 20 DO
+   BEGIN
+      FOR I := 0 TO 999 DO S[I] := 1;
+      C := 0;
+      FOR I := 2 TO 999 DO
+         IF S[I] = 1 THEN
+         BEGIN
+            C := C + 1;  J := I + I;
+            WHILE J <= 999 DO BEGIN S[J] := 0;  J := J + I END
+         END
+   END;
+   T1 := REG[6];
+   ACC := 0;
+   FOR I := 1 TO 200000 DO ACC := (ACC + I * 7 + I DIV 3) MOD 65521;
+   T2 := REG[6];
+   SAY('sieve 20 x 1000: ');  SAYN(C);  SAY(' primes, ');  SAYN(T1 - T0);  SAY(' ms\n');
+   SAY('arithmetic loop 200000: ');  SAYN(ACC);  SAY(', ');  SAYN(T2 - T1);  SAY(' ms\n')
+END;
+
 PROCEDURE DOCMD;
 VAR K, IDX : INTEGER;
 BEGIN
    MAKECMD;
    IDX := -1;
-   FOR K := 0 TO 23 DO IF CMDS[K] = CMDW THEN IDX := K;
+   FOR K := 0 TO 24 DO IF CMDS[K] = CMDW THEN IDX := K;
    IF (IDX = 1) THEN IDX := 0
    ELSE IF IDX = 3 THEN IDX := 2
    ELSE IF IDX = 9 THEN IDX := 8
@@ -695,7 +719,8 @@ BEGIN
       20: BEGIN NETOK := NETSTART(0);  IF NETOK THEN SAY('connected\n') END;
       21: BEGIN MB.RES := 2;  LEAVE := 1 END;
       22: DORUN;
-      23: DOEDIT
+      23: DOEDIT;
+      24: DOBENCH
    END
 END;
 
@@ -706,7 +731,7 @@ BEGIN
    CMDS[8] := 'COPY      ';  CMDS[9] := 'CP        ';  CMDS[10] := 'DEL       ';  CMDS[11] := 'RM        ';
    CMDS[12] := 'REN       ';  CMDS[13] := 'MV        ';  CMDS[14] := 'MKDIR     ';  CMDS[15] := 'RMDIR     ';
    CMDS[16] := 'STAT      ';  CMDS[17] := 'DF        ';  CMDS[18] := 'HELP      ';  CMDS[19] := 'INFO      ';
-   CMDS[20] := 'NET       ';  CMDS[21] := 'HALT      ';  CMDS[22] := 'RUN       ';  CMDS[23] := 'EDIT      '
+   CMDS[20] := 'NET       ';  CMDS[21] := 'HALT      ';  CMDS[22] := 'RUN       ';  CMDS[23] := 'EDIT      ';  CMDS[24] := 'BENCH     '
 END;
 
 PROCEDURE SHELL;
