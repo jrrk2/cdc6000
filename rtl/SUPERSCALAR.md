@@ -189,3 +189,21 @@ host/scoreboard mode=sb inorder=1 memlat=2 brpen=2 spec=1 dropno=1 increment=2,1
 ```
 (units are `boolean shift float_add long_add multiply divide increment branch`, each `count,latency,busy`; other keys:
 `width memlat brpen spec dropno inorder fwd limit`.)
+
+## 9  Results of the RTL (`rtl/cdc6000_sb.sv`)
+
+Stages 1-6 are built in one core: instruction stack on BRAM port B, predecoded issue, tag-based reservations with operand
+capture from the result buses, separate boolean/shift/long add/float add/multiply/divide/normalise/increment/branch units,
+an ordered memory queue, early branch resolution, a 2-bit branch history table used at decode, trailing no-operations skipped.
+
+| | sequential core | scoreboarded core |
+|---|---|---|
+| self-compile, instructions | 34.8 M | 34.8 M |
+| cycles (compile of the compiler, fixed-point run) | 73.8 M | **42.4 M** (1.74x) |
+| cycles per instruction | 2.12 | **about 1.13** |
+| clock (board build) | 50 MHz | 100 MHz target; out-of-context P&R at 10 ns: WNS -0.13 ns |
+| LUTs | ~10 K | ~26 K (9 DSP) |
+
+Verification: `tests/sbregress.sh` (random programs against the C model for the default and four unit-count/latency
+variants, float/integer/shift test, compiler fixed point, NFS self-compile).  The remaining branch stall is mostly the
+branch unit waiting for the long adder (the compiler subtracts, then tests): 83 % of the held cycles.
