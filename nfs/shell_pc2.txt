@@ -1,0 +1,3 @@
+compile pascal
+run
+VAR I : INTEGER;BEGIN I := 1 END .dir

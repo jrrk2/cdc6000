@@ -615,13 +615,18 @@ BEGIN
 END;
 
 PROCEDURE DORUN;
-VAR K : INTEGER;
+VAR K, V : INTEGER;
 BEGIN
    IF NCOMP = 0 THEN SAY('compile first\n')
    ELSE IF MB.PL[0] <> 2048 THEN SAY('the last compile did not finish\n')
    ELSE IF MB.PL[1] <> 0 THEN SAY('the program has errors, see the listing\n')
    ELSE
    BEGIN
+      V := 0;                                    (* run 2048: the compiler needs its ICO set (see the README) *)
+      IF NT >= 2 THEN
+         FOR K := 0 TO TL[1] - 1 DO
+            IF (LINE[TS[1] + K] >= 48) AND (LINE[TS[1] + K] <= 57) THEN V := V * 10 + LINE[TS[1] + K] - 48;
+      MB.PL[14] := V;
       SAY('running ...\n');
       FOR K := 0 TO LBASEN - 1 DO BASE[K] := LBASE[K];
       BASEN := LBASEN;                         (* the code file is name.cdc; the run time lets go of the name when it has read it *)
@@ -640,7 +645,8 @@ BEGIN
    SAY('compile [name]     compile name.pas to name.lst, name.cdc, name.pmd\n');
    SAY('                   (no name: input to output, pasclgo, pmdfile)\n');
    SAY('edit file          full screen editor (^S save, ^X leave)\n');
-   SAY('run                run the program compile has just made (screen and keyboard are its output and input)\n');
+   SAY('run [n]            run the program compile has just made (screen and keyboard are its output and input);\n');
+   SAY('                   run 2048 for the compiler itself: n goes into the cell its listing starts from\n');
    SAY('copy a b, ren a b, del f, mkdir d, rmdir d, stat f, df\n');
    SAY('info               addresses and the export; net: reconnect; halt\n')
 END;

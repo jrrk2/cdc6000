@@ -60,3 +60,13 @@ DHCP: its host number is the value of **DIP switches 0-6** (0: the default of th
 address the board was given (the first three bytes of it).  `info` in the shell says which it is.  The lease is not renewed (a run
 is short).  The model (`netmodel.h`) answers DHCP with 192.168.1.178; `-D n` gives the DIP switches and `-N` (before
 another option) takes the DHCP server away, in `host/cdcemu`, the Verilated core and the board-level simulation.
+
+
+## run
+
+`run` starts the program `compile` has just made: the run time clears the user memory (2049 up to the stack limit), reads `name.cdc`
+to the load address of the compile (kept from the compiler's PARMLIST), sets up INPUT/OUTPUT as the keyboard and the screen, and enters
+it.  `run n` also stores n in the cell ICO+1 (word 2049) before the start.  That cell is the compiler's PARMLIST.ICO, the origin of the
+programs it makes, and `pasclgo2img.py --compiler` sets it to 2048 in the image of the compiler; a compiler that was itself made by
+`compile pascal` needs `run 2048` for the same.  For any other program word 2049 is just its first variable, so it is not touched.
+(Without clearing, and without n, the cell kept a stale 2048 from earlier activity, and the listing began at 004001 by accident.)

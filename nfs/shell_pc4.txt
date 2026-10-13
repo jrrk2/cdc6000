@@ -1,0 +1,5 @@
+compile hi
+run
+compile pascal
+run 2048
+VAR I : INTEGER;BEGIN I := 1 END .dir
