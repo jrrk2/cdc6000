@@ -31,6 +31,9 @@ module vc707_cdc_eth (
 `ifndef CLK_HZ
 `define CLK_HZ 50_000_000
 `endif
+`ifndef CORE_SB
+`define CORE_SB 0          // 1: the scoreboarded core
+`endif
 	wire clk_sys, clk_mac, rst_sys_n, locked;
 	clkgen_vc707 #(.MAC_DIV(`MAC_DIV), .SYS_DIV(`SYS_DIV)) clkgen (
 		.IO_CLK_P(IO_CLK_P), .IO_CLK_N(IO_CLK_N), .IO_RST_N(~IO_RST),
@@ -62,7 +65,7 @@ module vc707_cdc_eth (
 
 	wire [7:0] core_led;
 	wire halted, fault;
-	cdc_eth_core #(.CLK_HZ(`CLK_HZ)) core (
+	cdc_eth_core #(.CLK_HZ(`CLK_HZ), .CORE_SB(`CORE_SB)) core (
 		.clk_sys(clk_sys), .resetn(resetn), .DIP(GPIO_DIP_SW), .BTN(GPIO_SW),
 		.eth_clk(clk_mac), .eth_rst(eth_rst),
 		.rx_axis_tdata(rx_tdata), .rx_axis_tvalid(rx_tvalid), .rx_axis_tlast(rx_tlast), .rx_axis_tuser(rx_tuser),

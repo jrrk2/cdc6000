@@ -7,7 +7,7 @@ H=../host
 make -s
 [ -f $H/stage2/pasclgo.out ] || $H/selfhost.sh
 mkdir -p r2 r3
-CORE=./obj_dir/Vcdc6000_core
+CORE=${CORE:-./obj_dir/Vcdc6000_core}      # CORE=./obj_dir_sb/Vcdc6000_sb for the scoreboarded core (make sb)
 $CORE $H/runtime.img $H/stage2/in.img -i $H/pascal.cdc -o r2/listing.txt -d r2 -m r2/mem.img
 python3 $H/memparm.py r2/mem.img 2048 r2/parmlist.out
 python3 $H/pasclgo2img.py r2/pasclgo.out r2/parmlist.out r3/in.img --compiler

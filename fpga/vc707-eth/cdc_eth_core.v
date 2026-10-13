@@ -14,7 +14,8 @@
 `default_nettype none
 module cdc_eth_core #(
 	parameter integer CLK_HZ = 50_000_000,
-	parameter integer BAUD   = 115_200
+	parameter integer BAUD   = 115_200,
+	parameter integer CORE_SB = 0          // 1: the scoreboarded core (rtl/cdc6000_sb.sv), 0: the sequential one
 ) (
 	input  wire        clk_sys,
 	input  wire        resetn,
@@ -142,21 +143,41 @@ module cdc_eth_core #(
 	wire [17:0] dbg_pc;
 	wire [63:0] icount;
 
-	wire [15:0] ext_addr;
+	wire [15:0] ext_addr, ext_iaddr;
 	wire        ext_we;
-	wire [59:0] ext_wdata, ext_rdata;
-	cdc_ram_bram ram (.clk(clk_sys), .en(1'b1), .we(ext_we), .addr(ext_addr), .din(ext_wdata), .dout(ext_rdata));
+	wire [59:0] ext_wdata, ext_rdata, ext_irdata;
+	wire [479:0] dbg_x;
+	wire [143:0] dbg_a, dbg_b;
+	cdc_ram_bram ram (.clk(clk_sys), .en(1'b1), .we(ext_we), .addr(ext_addr), .din(ext_wdata), .dout(ext_rdata),
+		.iaddr(ext_iaddr), .idout(ext_irdata));
 
-	cdc6000_core #(.MEM_AW(16), .EXT_MEM(1'b1)) core (
-		.clk(clk_sys), .reset(!resetn),
-		.ext_addr(ext_addr), .ext_we(ext_we), .ext_wdata(ext_wdata), .ext_rdata(ext_rdata),
-		.load_we(1'b0), .load_addr(17'd0), .load_data(60'd0),
-		.rx_valid(1'b0), .rx_char(6'd0), .rx_eof(1'b1), .rx_take(),
-		.tx_valid(), .tx_char(), .tx_ready(1'b1),
-		.fo_valid(), .fo_name(), .fo_word(), .fo_ready(1'b1),
-		.dev_req(dev_req), .dev_we(dev_we), .dev_off(dev_off), .dev_wdata(dev_wdata),
-		.dev_ack(dev_ack), .dev_rdata(dev_rdata),
-		.halted(halted), .fault(fault), .dbg_pc(dbg_pc), .icount(icount));
+	generate if (CORE_SB) begin : g_sb
+		cdc6000_sb #(.MEM_AW(16), .EXT_MEM(1'b1)) core (
+			.clk(clk_sys), .reset(!resetn),
+			.ext_iaddr(ext_iaddr), .ext_irdata(ext_irdata),
+			.ext_addr(ext_addr), .ext_we(ext_we), .ext_wdata(ext_wdata), .ext_rdata(ext_rdata),
+			.load_we(1'b0), .load_addr(16'd0), .load_data(60'd0),
+			.rx_valid(1'b0), .rx_char(6'd0), .rx_eof(1'b1), .rx_take(),
+			.tx_valid(), .tx_char(), .tx_ready(1'b1),
+			.fo_valid(), .fo_name(), .fo_word(), .fo_ready(1'b1),
+			.dev_req(dev_req), .dev_we(dev_we), .dev_off(dev_off), .dev_wdata(dev_wdata),
+			.dev_ack(dev_ack), .dev_rdata(dev_rdata),
+			.halted(halted), .fault(fault), .dbg_pc(dbg_pc), .icount(icount),
+			.dbg_x(dbg_x), .dbg_a(dbg_a), .dbg_b(dbg_b));
+	end else begin : g_seq
+		assign ext_iaddr = 16'd0;
+		cdc6000_core #(.MEM_AW(16), .EXT_MEM(1'b1)) core (
+			.clk(clk_sys), .reset(!resetn),
+			.ext_addr(ext_addr), .ext_we(ext_we), .ext_wdata(ext_wdata), .ext_rdata(ext_rdata),
+			.load_we(1'b0), .load_addr(17'd0), .load_data(60'd0),
+			.rx_valid(1'b0), .rx_char(6'd0), .rx_eof(1'b1), .rx_take(),
+			.tx_valid(), .tx_char(), .tx_ready(1'b1),
+			.fo_valid(), .fo_name(), .fo_word(), .fo_ready(1'b1),
+			.dev_req(dev_req), .dev_we(dev_we), .dev_off(dev_off), .dev_wdata(dev_wdata),
+			.dev_ack(dev_ack), .dev_rdata(dev_rdata),
+			.halted(halted), .fault(fault), .dbg_pc(dbg_pc), .icount(icount),
+			.dbg_x(dbg_x), .dbg_a(dbg_a), .dbg_b(dbg_b));
+	end endgenerate
 
 	// ─── the device bus ──────────────────────────────────────────────────
 	localparam [2:0] D_IDLE = 3'd0, D_PKT = 3'd1, D_ACK = 3'd2, D_DROP = 3'd3, D_UART = 3'd4;
