@@ -372,7 +372,8 @@ module cdc6000_sb #(
   logic [5:0]  pf0;
   logic [14:0] pc0, pc1;
   logic        pl;
-  logic        nextw;
+  logic        nextw, rest_no;
+  logic [4:0]  trail;
   logic [2:0]  newpos;
   always_comb begin
     pp[0] = dw[59:45]; pp[1] = dw[44:30]; pp[2] = dw[29:15]; pp[3] = dw[14:0];
@@ -388,7 +389,11 @@ module cdc6000_sb #(
     pl = found && is_long_f(pf0);
     pc1 = (spos < 3'd3) ? pp[spos[1:0] + 2'd1] : 15'd0;
     newpos = found ? (spos + (pl ? 3'd2 : 3'd1)) : 3'd4;
-    nextw = (newpos >= 3'd4);
+    // only no-operations after the instruction: go on to the next word at once (they are counted with the next instruction)
+    rest_no = 1'b1;
+    for (int q = 0; q < 4; q++) if (q >= newpos && pp[q][14:9] != 6'o46) rest_no = 1'b0;
+    trail = (newpos < 3'd4) ? 5'(3'd4 - newpos) : 5'd0;
+    nextw = (newpos >= 3'd4) || (found && rest_no);
   end
 
   // ---- the guess: unconditional jumps and calls with a known place are followed at once; a conditional branch as the table says
@@ -920,7 +925,7 @@ module cdc6000_sb #(
             dr_K <= {pc0[2:0], pc1}; dr_ns <= dp_nskip + skipc; dr_bad <= pl && (spos == 3'd3);
             dr_D <= d_dec;
             dr_pred <= d_cond && d_pred; dr_fw <= d_fw; dr_fs <= d_fs; dr_idx <= d_idx;
-            dp_nskip <= 5'd0;
+            dp_nskip <= (rest_no && newpos < 3'd4) ? trail : 5'd0;
           end else dp_nskip <= dp_nskip + skipc;
           if (found && d_takep) begin dp_w <= d_tgt; dp_s <= 2'd0; end                // follow the jump / the guess
           else if (nextw) begin dp_w <= dp_w + 18'd1; dp_s <= 2'd0; end
@@ -1109,10 +1114,31 @@ module cdc6000_sb #(
     end
   end
 `ifndef SYNTHESIS
+  // where the branch unit waits: by the unit that makes the operand it needs (printed when the simulation ends)
+  logic [3:0] tag_u[0:15];
+  longint hold_by[0:NU];
+  longint hold_total;
+  initial begin for (int q = 0; q <= NU; q++) hold_by[q] = 0; hold_total = 0; end
+  always @(posedge clk) begin
+    if (!reset && issue_fire && need_tag) tag_u[new_tag] <= sel_u[3:0];
+    if (!reset && boot == 3'd4 && br_pend && e_v[U_BR] && !launch[U_BR]) begin
+      hold_total <= hold_total + 1;
+      if (e_w0[U_BR]) hold_by[(e_t0[U_BR][4:1] == 4'd0 && 1'b0) ? 0 : (tag_known(e_t0[U_BR]) ? tag_u[e_t0[U_BR][4:1]] : NU)] <= hold_by[(tag_known(e_t0[U_BR]) ? tag_u[e_t0[U_BR][4:1]] : NU)] + 1;
+      else if (e_w1[U_BR]) hold_by[(tag_known(e_t1[U_BR]) ? tag_u[e_t1[U_BR][4:1]] : NU)] <= hold_by[(tag_known(e_t1[U_BR]) ? tag_u[e_t1[U_BR][4:1]] : NU)] + 1;
+    end
+  end
+  function automatic logic tag_known(input logic [4:0] t); tag_known = 1'b1; endfunction
+  final begin
+    $display("branch unit waits (cycles, by the unit that makes the operand): total %0d", hold_total);
+    for (int q = 0; q <= NU; q++) if (hold_by[q] != 0) $display("   unit %0d: %0d", q, hold_by[q]);
+  end
   // +trace: one line per issued instruction, "P/slot", as cdcemu -t and the sequential core print (no-operations are not issued)
   logic trace_en;
   initial trace_en = $test$plusargs("trace");
   always @(posedge clk) if (!reset && trace_en && issue_fire) $display("T %o/%0d  c=%0d f=%o", dr_w, dr_s, pc_[0], dr_f);
+  logic dbg_prev_issue;
+  always @(posedge clk) dbg_prev_issue <= issue_fire;
+  always @(posedge clk) if (!reset && trace_en && boot==3'd4 && !dr_v) $display("E c=%0d dp=%o/%0d hit=%b found=%b redir=%b prev_issue=%b fv=%b fa=%o wantv=%b", pc_[0], dp_w, dp_s, dec_hit, found, redirect_v, dbg_prev_issue, f_v, f_a, want_v);
   always @(posedge clk) if (!reset && trace_en && st_v) $display("S %o <= %020o  (f_v=%b f_a=%o)", st_a, st_d, f_v, f_a);
   always @(posedge clk) if (!reset && trace_en && redirect_v) $display("R %o jump_now=%b br_early=%b launchBR=%b taken=%b e_f=%o dr_f=%o dr_K=%o rj=%b jimm=%b early_tk=%b", redirect_t, jump_now, br_early, launch[U_BR], br_taken, e_f[U_BR], dr_f, dr_K, D.rj, D.jimm, br_e_tk);
 `endif

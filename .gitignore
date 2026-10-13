@@ -39,3 +39,5 @@ fpga/vc707-eth/updatemem.log
 *~
 /nfs/.out
 /host/scoreboard
+/rtl/r2sb/
+/rtl/r3sb/
