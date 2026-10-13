@@ -6,6 +6,7 @@
 
 # build products: regenerate with the scripts in host/, nfs/, rtl/, fpga/
 /rtl/obj_dir/
+/rtl/obj_dir_sb/
 /rtl/r2/
 /rtl/r3/
 /nfs/build/

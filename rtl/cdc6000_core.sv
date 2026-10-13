@@ -66,7 +66,10 @@ module cdc6000_core #(
 
     // debug
     output logic [17:0] dbg_pc,
-    output logic [63:0] icount
+    output logic [63:0] icount,
+    output logic [479:0] dbg_x,        // X0 .. X7, X0 in the low bits
+    output logic [143:0] dbg_a,        // A0 .. A7
+    output logic [143:0] dbg_b         // B0 .. B7
 );
   import cdc_pkg::*;
 
@@ -339,6 +342,11 @@ module cdc6000_core #(
 
   // ------------------------------------------------------------------ the state machine
   assign dbg_pc = p;
+  always_comb begin
+    for (int q = 0; q < 8; q++) begin
+      dbg_x[60*q +: 60] = x[q]; dbg_a[18*q +: 18] = a[q]; dbg_b[18*q +: 18] = b[q];
+    end
+  end
 
   always_ff @(posedge clk) begin
     rx_take <= 1'b0; tx_valid <= 1'b0; fo_valid <= 1'b0;

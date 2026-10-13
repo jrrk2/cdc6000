@@ -36,6 +36,7 @@ static unsigned A[8], B[8];
 static unsigned P;
 static long long ninstr, maxinstr, jlo, jhi;
 static unsigned watch; static int tracei; static const char *dumpf;
+static int regdump;       /* -R: X, A, B registers on stdout at the halt */
 static FILE *tracef;      /* -T file: one 4 byte record per instruction for scoreboard.c */
 
 /* ---------- 18 bit / 60 bit ones-complement arithmetic ---------- */
@@ -168,6 +169,7 @@ static void halt_exit(void)
 {
     if (dumpf) { FILE *d = fopen(dumpf, "w"); unsigned q; for (q = 0; q < MEMW; q++) if (mem[q]) fprintf(d, "%06o %020llo\n", q, (unsigned long long)mem[q]); fclose(d); }
     if (tracef) fflush(tracef);
+    if (regdump) { int q; for (q = 0; q < 8; q++) printf("X%d=%020llo A%d=%06o B%d=%06o\n", q, (unsigned long long)X[q], q, A[q] & M18, q, B[q] & M18); }
     io_closeall();
     fprintf(stderr, "[halt after %lld instructions]\n", ninstr);
     exit(0);
@@ -389,6 +391,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-t")) { tracei = atoi(argv[a + 1]); }
         else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
         else if (!strcmp(argv[a], "-T")) tracef = fopen(argv[a + 1], "wb");
+        else if (!strcmp(argv[a], "-R")) { regdump = 1; a--; }
         else if (!strcmp(argv[a], "-u")) nm_uart_in = fopen(argv[a + 1], "rb");
         else if (!strcmp(argv[a], "-D")) nm_dip = atoi(argv[a + 1]);
         else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }

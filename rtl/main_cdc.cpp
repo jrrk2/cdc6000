@@ -7,13 +7,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "Vcdc6000_core.h"
-#include "Vcdc6000_core___024root.h"
+#ifdef CORE_SB
+#define VTOP Vcdc6000_sb
+#define VTOPH "Vcdc6000_sb.h"
+#define VROOTH "Vcdc6000_sb___024root.h"
+#define COREMEM cdc6000_sb__DOT__mem
+#else
+#define VTOP Vcdc6000_core
+#define VTOPH "Vcdc6000_core.h"
+#define VROOTH "Vcdc6000_core___024root.h"
+#define COREMEM cdc6000_core__DOT__mem
+#endif
+#include VTOPH
+#include VROOTH
 #include "verilated.h"
 #include "../host/cdcio.h"
 #include "../nfs/netmodel.h"
 
-static void load_into(Vcdc6000_core *top, const char *f, void (*tick)(void))
+static void load_into(VTOP *top, const char *f, void (*tick)(void))
 {
     FILE *fp = fopen(f, "r"); char line[128]; unsigned a; unsigned long long w;
     if (!fp) { perror(f); exit(2); }
@@ -25,7 +36,8 @@ static void load_into(Vcdc6000_core *top, const char *f, void (*tick)(void))
     top->load_we = 0;
 }
 
-static Vcdc6000_core *top;
+static int regdump;
+static VTOP *top;
 static VerilatedContext *ctx;
 static void tick(void)
 {
@@ -53,8 +65,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-u")) nm_uart_in = fopen(argv[a + 1], "rb");
         else if (!strcmp(argv[a], "-D")) nm_dip = atoi(argv[a + 1]);
         else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
+        else if (!strcmp(argv[a], "-R")) { regdump = 1; a--; }
     }
-    top = new Vcdc6000_core(ctx);
+    top = new VTOP(ctx);
     top->reset = 1; top->load_we = 0; top->rx_valid = 0; top->tx_ready = 1; top->fo_ready = 1;
     top->dev_ack = 0; top->dev_rdata = 0;
     tick(); tick();
@@ -88,9 +101,20 @@ int main(int argc, char **argv)
     }
     if (dumpf) {
         FILE *d = fopen(dumpf, "w");
-        auto &m = top->rootp->cdc6000_core__DOT__mem;
+        auto &m = top->rootp->COREMEM;
         for (unsigned q = 0; q < (1u << 17); q++) if (m[q]) fprintf(d, "%06o %020llo\n", q, (unsigned long long)m[q]);
         fclose(d);
+    }
+    if (regdump) {                               // the same lines as cdcemu -R
+        for (int q = 0; q < 8; q++) {
+            unsigned long long xv = 0; unsigned av = 0, bv = 0;
+            for (int w = 0; w < 60; w++) xv |= (unsigned long long)((top->dbg_x[(60 * q + w) / 32] >> ((60 * q + w) % 32)) & 1) << w;
+            for (int w = 0; w < 18; w++) {
+                av |= ((top->dbg_a[(18 * q + w) / 32] >> ((18 * q + w) % 32)) & 1) << w;
+                bv |= ((top->dbg_b[(18 * q + w) / 32] >> ((18 * q + w) % 32)) & 1) << w;
+            }
+            printf("X%d=%020llo A%d=%06o B%d=%06o\n", q, xv, q, av, q, bv);
+        }
     }
     io_closeall();
     fprintf(stderr, "[halt after %llu instructions, %lld cycles%s]\n", (unsigned long long)top->icount, cycles,
