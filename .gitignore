@@ -37,3 +37,4 @@ __pycache__/
 fpga/vc707-eth/updatemem.log
 *~
 /nfs/.out
+/host/scoreboard

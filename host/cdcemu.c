@@ -36,6 +36,7 @@ static unsigned A[8], B[8];
 static unsigned P;
 static long long ninstr, maxinstr, jlo, jhi;
 static unsigned watch; static int tracei; static const char *dumpf;
+static FILE *tracef;      /* -T file: one 4 byte record per instruction for scoreboard.c */
 
 /* ---------- 18 bit / 60 bit ones-complement arithmetic ---------- */
 static unsigned add18(unsigned a, unsigned b)
@@ -166,6 +167,7 @@ static double f2d(u64 w)
 static void halt_exit(void)
 {
     if (dumpf) { FILE *d = fopen(dumpf, "w"); unsigned q; for (q = 0; q < MEMW; q++) if (mem[q]) fprintf(d, "%06o %020llo\n", q, (unsigned long long)mem[q]); fclose(d); }
+    if (tracef) fflush(tracef);
     io_closeall();
     fprintf(stderr, "[halt after %lld instructions]\n", ninstr);
     exit(0);
@@ -344,6 +346,12 @@ static void run(void)
             default: fprintf(stderr, "bad opcode %o at %o\n", f, P); halt_exit();
             }
             B[0] = 0;
+            if (tracef) {       /* f, i j k (9 bits), flags: 1 long, 2 taken, 4 word-aligned first parcel (slot 0) */
+                unsigned char rec[4];
+                rec[0] = (unsigned char)f; rec[1] = (unsigned char)((i << 6 | j << 3 | k) >> 8); rec[2] = (unsigned char)((i << 6 | j << 3 | k) & 255);
+                rec[3] = (unsigned char)((longi ? 1 : 0) | (jump ? 2 : 0) | (slot == 0 ? 4 : 0));
+                fwrite(rec, 1, 4, tracef);
+            }
             if (jump && ninstr >= jlo && ninstr <= jhi) fprintf(stderr, "%lld: %o/%d -> %o  X7=%o X6=%llo\n", ninstr, P, slot, target, (unsigned)X[7], (unsigned long long)X[6]);
             if (jump) { P = target; break; }
             slot += (f == 1 || f == 2 || f == 3 || (f >= 4 && f <= 7) || f == 050 || f == 051 || f == 052 ||
@@ -380,6 +388,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-w")) watch = strtoul(argv[a + 1], 0, 8);
         else if (!strcmp(argv[a], "-t")) { tracei = atoi(argv[a + 1]); }
         else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
+        else if (!strcmp(argv[a], "-T")) tracef = fopen(argv[a + 1], "wb");
         else if (!strcmp(argv[a], "-u")) nm_uart_in = fopen(argv[a + 1], "rb");
         else if (!strcmp(argv[a], "-D")) nm_dip = atoi(argv[a + 1]);
         else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
