@@ -32,6 +32,7 @@ module cdc6000_sb #(
     parameter int LAT_INC = 1,        // last quotient bit, normalise/pack/count 3)
     parameter int MEMLAT = 1,         // 1: the word read is on the bus the cycle after the request; 2: one register more
     parameter int HALT_WAIT = 80,     // cycles that older instructions get to finish after the store that halts
+    parameter int BHT_AW = 9,         // the branch history table: 2 bit counters, 2**BHT_AW of them (decode follows the guess; nothing executes on a guess)
     parameter bit AGEN = 1'b1,        // work out the address of a load or store at issue when the operands are there
     parameter bit RELAX_WAW = 1'b1    // 1: an instruction may issue while its destination is reserved (the newer tag takes over); 0: it waits, as on the original
 ) (
@@ -298,7 +299,14 @@ module cdc6000_sb #(
   logic [2:0]        dr_i, dr_j, dr_k;
   logic [17:0]       dr_K;
   logic [4:0]        dr_ns;
+  logic              dr_pred;                           // decode followed the branch to its target (a guess)
+  logic [17:0]       dr_fw;                             // where the code goes on if it does not branch: word and parcel
+  logic [1:0]        dr_fs;
+  logic [BHT_AW-1:0] dr_idx;                            // its place in the history table
+  logic [1:0]        bht[0:(1<<BHT_AW)-1];
+  initial for (int q = 0; q < (1<<BHT_AW); q++) bht[q] = 2'b10;
   logic [1:0]        dr_s;                              // the parcel it came from (for the trace)
+  dec_t              dr_D;                              // its decoding
   logic              dr_bad;                            // a 30 bit instruction in the last parcel
 
   // data written into memory this cycle (keeps the instruction stack right)
@@ -308,6 +316,7 @@ module cdc6000_sb #(
 
   logic redirect_v;
   logic [17:0] redirect_t;
+  logic [1:0]  redirect_s;
   logic issue_fire;
 
   logic [MEM_AW-1:0] dpa;
@@ -382,20 +391,37 @@ module cdc6000_sb #(
     nextw = (newpos >= 3'd4);
   end
 
+  // ---- the guess: unconditional jumps and calls with a known place are followed at once; a conditional branch as the table says
+  logic        d_cond, d_static, d_pred, d_takep;
+  logic [17:0] d_tgt, d_fw, d_K;
+  logic [1:0]  d_fs;
+  logic [BHT_AW-1:0] d_idx;
+  always_comb begin
+    d_K = {pc0[2:0], pc1};
+    d_cond = found && !(pl && spos == 3'd3) && (pf0 >= 6'o03 && pf0 <= 6'o07);
+    d_static = found && !(pl && spos == 3'd3) && ((pf0 == 6'o01) || (pf0 == 6'o02 && pc0[8:6] == 3'd0));
+    d_idx = {dp_w[BHT_AW-3:0], dp_s};
+    d_pred = bht[d_idx][1];
+    d_takep = d_static || (d_cond && d_pred);
+    d_tgt = (pf0 == 6'o01) ? d_K + 18'd1 : d_K;
+    d_fw = nextw ? dp_w + 18'd1 : dp_w;
+    d_fs = nextw ? 2'd0 : newpos[1:0];
+  end
+
   // ------------------------------------------------------------------ issue
   // the place a branch in the decode register goes to, when it is known
   always_comb begin
     pf_tv = 1'b0; pf_tgt = '0;
     if (dr_v && !dr_bad) begin
-      if (dr_f == 6'o01) begin pf_tv = 1'b1; pf_tgt = MEM_AW'(dr_K + 18'd1); end
-      else if (dr_f == 6'o03 || (dr_f >= 6'o04 && dr_f <= 6'o07) || (dr_f == 6'o02 && dr_i == 3'd0)) begin pf_tv = 1'b1; pf_tgt = MEM_AW'(dr_K); end
+      if (dr_f >= 6'o03 && dr_f <= 6'o07) begin pf_tv = 1'b1; pf_tgt = dr_pred ? MEM_AW'(dr_fw) : MEM_AW'(dr_K); end      // the other way
     end
   end
-  dec_t D;
-  dec_t Dbad;
+  // the instruction is decoded when it goes into the decode register, so issue starts from registers
+  dec_t D, Dbad, d_dec;
   always_comb begin
     Dbad = '0; Dbad.uk = UK_NONE; Dbad.special = 1'b1;
-    D = dr_bad ? Dbad : decode(dr_f, dr_i, dr_j, dr_k);
+    d_dec = (pl && spos == 3'd3) ? Dbad : decode(pf0, pc0[8:6], pc0[5:3], pc0[2:0]);
+    D = dr_D;
   end
 
   // units: entries
@@ -481,6 +507,10 @@ module cdc6000_sb #(
   logic drained;
   logic hold;                                          // issue is held
   logic br_pend, halt_req;
+  logic        bu_pred;                                 // the guess for the branch in the branch unit, and where it goes on
+  logic [17:0] bu_fw;
+  logic [1:0]  bu_fs;
+  logic [BHT_AW-1:0] bu_idx;
   logic [6:0] halt_cnt;
 
   logic       unit_ok, dest_ok, need_tag, need_mq, mq_ok, sp_ok;
@@ -535,11 +565,13 @@ module cdc6000_sb #(
   // jumps taken at issue: RJ, and JP with no register
   logic jump_now;
   logic [17:0] jump_t;
+  logic [1:0]  jump_s;
   always_comb begin
-    jump_now = 1'b0; jump_t = 18'd0;
-    if (issue_fire && D.rj) begin jump_now = 1'b1; jump_t = dr_K + 18'd1; end
-    if (issue_fire && D.jimm) begin jump_now = 1'b1; jump_t = dr_K; end
-    if (issue_fire && br_early && br_e_tk) begin jump_now = 1'b1; jump_t = br_e_tgt; end
+    jump_now = 1'b0; jump_t = 18'd0; jump_s = 2'd0;
+    if (issue_fire && br_early && (br_e_tk != dr_pred)) begin     // decided at issue, and decode had gone the other way
+      jump_now = 1'b1;
+      jump_t = br_e_tk ? br_e_tgt : dr_fw; jump_s = br_e_tk ? 2'd0 : dr_fs;
+    end
   end
 
   // ------------------------------------------------------------------ units: execution
@@ -596,25 +628,30 @@ module cdc6000_sb #(
   logic        ag_ok;
   always_comb begin
     logic [17:0] k18, a0, a1;
-    k18 = dr_K; a0 = o_v[0][17:0]; a1 = o_v[1][17:0];
+    k18 = dr_K; a0 = ebr0[17:0]; a1 = ebr1[17:0];
     case (dr_f[2:0])
       3'd0, 3'd1, 3'd2: ag_sum = add18(k18, a0);
       3'd3, 3'd4, 3'd6: ag_sum = add18(a1, a0);
       3'd5, 3'd7: ag_sum = add18(neg18(a1), a0);
     endcase
-    ag_ok = AGEN && (D.mld || D.mst) && !o_w[0] && !o_w[1];
+    ag_ok = AGEN && (D.mld || D.mst) && !(D.s0v && rsv_v[D.s0r]) && !(D.s1v && rsv_v[D.s1r]);      // from the registers only: a bypass would chain two adders
   end
 
   // branch unit
   logic        br_go, br_taken;
+  logic [60:0] bu_b0, bu_b1;                           // the result bus as the branch unit's operands wait for it
+  logic [59:0] bu_x0, bu_x1;
   logic [17:0] br_tgt;
   logic signed [18:0] bva, bvb;
   always_comb begin
-    bva = sb18(e_s0[U_BR][17:0]); bvb = sb18(e_s1[U_BR][17:0]);
+    bu_b0 = busf(e_t0[U_BR]); bu_b1 = busf(e_t1[U_BR]);
+    bu_x0 = e_w0[U_BR] ? bu_b0[59:0] : e_s0[U_BR];
+    bu_x1 = e_w1[U_BR] ? bu_b1[59:0] : e_s1[U_BR];
+    bva = sb18(bu_x0[17:0]); bvb = sb18(bu_x1[17:0]);
     br_taken = 1'b0; br_tgt = e_K[U_BR];
     case (e_f[U_BR])
-      6'o02: begin br_taken = 1'b1; br_tgt = e_K[U_BR] + e_s0[U_BR][17:0]; end
-      6'o03: br_taken = cond(e_ijk[U_BR][8:6], e_s0[U_BR]);
+      6'o02: begin br_taken = 1'b1; br_tgt = e_K[U_BR] + bu_x0[17:0]; end
+      6'o03: br_taken = cond(e_ijk[U_BR][8:6], bu_x0);
       6'o04: br_taken = (bva == bvb);
       6'o05: br_taken = (bva != bvb);
       6'o06: br_taken = (bva >= bvb);
@@ -667,6 +704,9 @@ module cdc6000_sb #(
       launch[u] = e_v[u] && !e_w0[u] && !e_w1[u];
       accept[u] = !e_v[u] || launch[u];
     end
+    // the branch unit decides in the cycle its operands appear on the result bus
+    launch[U_BR] = e_v[U_BR] && (!e_w0[U_BR] || bu_b0[60]) && (!e_w1[U_BR] || bu_b1[60]);
+    accept[U_BR] = !e_v[U_BR] || launch[U_BR];
     // the divider keeps its entry while it works
     launch[U_DIV] = e_v[U_DIV] && !e_w0[U_DIV] && !e_w1[U_DIV] && (dv_run ? dv_fin : dv_special_v);
     accept[U_DIV] = !e_v[U_DIV];
@@ -871,16 +911,19 @@ module cdc6000_sb #(
 
       // ---- decode into the decode register
       if (redirect_v) begin
-        dp_w <= redirect_t; dp_s <= 2'd0; dr_v <= 1'b0; dp_nskip <= 5'd0;
+        dp_w <= redirect_t; dp_s <= redirect_s; dr_v <= 1'b0; dp_nskip <= 5'd0;
       end else if (!dr_v || issue_fire) begin
         dr_v <= 1'b0;
         if (boot == 3'd4 && dec_hit) begin
           if (found) begin
             dr_v <= 1'b1; dr_w <= dp_w; dr_s <= spos[1:0]; dr_f <= pf0; dr_i <= pc0[8:6]; dr_j <= pc0[5:3]; dr_k <= pc0[2:0];
             dr_K <= {pc0[2:0], pc1}; dr_ns <= dp_nskip + skipc; dr_bad <= pl && (spos == 3'd3);
+            dr_D <= d_dec;
+            dr_pred <= d_cond && d_pred; dr_fw <= d_fw; dr_fs <= d_fs; dr_idx <= d_idx;
             dp_nskip <= 5'd0;
           end else dp_nskip <= dp_nskip + skipc;
-          if (nextw) begin dp_w <= dp_w + 18'd1; dp_s <= 2'd0; end
+          if (found && d_takep) begin dp_w <= d_tgt; dp_s <= 2'd0; end                // follow the jump / the guess
+          else if (nextw) begin dp_w <= dp_w + 18'd1; dp_s <= 2'd0; end
           else dp_s <= newpos[1:0];
         end
       end else if (issue_fire) dr_v <= 1'b0;
@@ -925,7 +968,7 @@ module cdc6000_sb #(
           e_s1[sel_u] <= o_v[1]; e_w1[sel_u] <= o_w[1]; e_t1[sel_u] <= o_t[1];
           e_mf[sel_u] <= (D.mld || D.mst) && !ag_ok; e_mq[sel_u] <= mq_tail;
           e_wd[sel_u] <= dr_w;
-          if (D.uk == UK_BR) br_pend <= 1'b1;
+          if (D.uk == UK_BR) begin br_pend <= 1'b1; bu_pred <= dr_pred; bu_fw <= dr_fw; bu_fs <= dr_fs; bu_idx <= dr_idx; end
         end
         // the memory queue
         if (need_mq) begin
@@ -1005,9 +1048,24 @@ module cdc6000_sb #(
 
   // redirect: the branch unit resolved a taken branch, or a jump at issue
   always_comb begin
-    redirect_v = 1'b0; redirect_t = 18'd0;
-    if (jump_now) begin redirect_v = 1'b1; redirect_t = jump_t; end
-    if (launch[U_BR] && br_taken) begin redirect_v = 1'b1; redirect_t = br_tgt; end
+    redirect_v = 1'b0; redirect_t = 18'd0; redirect_s = 2'd0;
+    if (jump_now) begin redirect_v = 1'b1; redirect_t = jump_t; redirect_s = jump_s; end
+    if (launch[U_BR] && (br_taken != bu_pred)) begin
+      redirect_v = 1'b1; redirect_t = br_taken ? br_tgt : bu_fw; redirect_s = br_taken ? 2'd0 : bu_fs;
+    end
+  end
+
+  // the history table learns from every conditional branch that is decided
+  logic              bht_we, bht_tk;
+  logic [BHT_AW-1:0] bht_i;
+  always_comb begin
+    bht_we = 1'b0; bht_tk = 1'b0; bht_i = dr_idx;
+    if (issue_fire && br_early && dr_f >= 6'o03) begin bht_we = 1'b1; bht_tk = br_e_tk; bht_i = dr_idx; end
+    if (launch[U_BR] && e_f[U_BR] >= 6'o03) begin bht_we = 1'b1; bht_tk = br_taken; bht_i = bu_idx; end
+  end
+  always_ff @(posedge clk) if (bht_we && !reset) begin
+    if (bht_tk) bht[bht_i] <= (bht[bht_i] == 2'b11) ? 2'b11 : bht[bht_i] + 2'b01;
+    else bht[bht_i] <= (bht[bht_i] == 2'b00) ? 2'b00 : bht[bht_i] - 2'b01;
   end
 
   // ---- performance counters (not used on the board: the tools remove them)
@@ -1034,6 +1092,8 @@ module cdc6000_sb #(
       if (!dr_v && !dec_hit) pc_[10] <= pc_[10] + 1;
       since_rd <= redirect_v ? 3'd0 : (since_rd == 3'd7 ? 3'd7 : since_rd + 3'd1);
       if (!dr_v && since_rd < 3'd4) pc_[11] <= pc_[11] + 1;
+      if (!dr_v && dec_hit && !found) pc_[14] <= pc_[14] + 1;
+      if (!dr_v && !dec_hit && since_rd >= 3'd4) pc_[15] <= pc_[15] + 1;
       if (mq_v[mq_head] && !mq_av[mq_head]) pc_[12] <= pc_[12] + 1;
       if (mq_v[mq_head] && mq_av[mq_head] && mq_st[mq_head] && !mq_dv[mq_head]) pc_[13] <= pc_[13] + 1;
     end
@@ -1052,7 +1112,7 @@ module cdc6000_sb #(
   // +trace: one line per issued instruction, "P/slot", as cdcemu -t and the sequential core print (no-operations are not issued)
   logic trace_en;
   initial trace_en = $test$plusargs("trace");
-  always @(posedge clk) if (!reset && trace_en && issue_fire) $display("T %o/%0d", dr_w, dr_s);
+  always @(posedge clk) if (!reset && trace_en && issue_fire) $display("T %o/%0d  c=%0d f=%o", dr_w, dr_s, pc_[0], dr_f);
   always @(posedge clk) if (!reset && trace_en && st_v) $display("S %o <= %020o  (f_v=%b f_a=%o)", st_a, st_d, f_v, f_a);
   always @(posedge clk) if (!reset && trace_en && redirect_v) $display("R %o jump_now=%b br_early=%b launchBR=%b taken=%b e_f=%o dr_f=%o dr_K=%o rj=%b jimm=%b early_tk=%b", redirect_t, jump_now, br_early, launch[U_BR], br_taken, e_f[U_BR], dr_f, dr_K, D.rj, D.jimm, br_e_tk);
 `endif
