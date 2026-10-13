@@ -1,0 +1,147 @@
+(*DECK PASCSYM*)
+(*****************************************************************
+ *                                                               *
+ *                      PASCAL COMPILER                          *
+ *                                                               *
+ *                         20/06/72                              *
+ *                                                               *
+ *   AUTHORS:  U. AMMANN,  R. SCHILD                             *
+ *                                                               *
+ *           FACHGRUPPE COMPUTERWISSENSCHAFTEN                   *
+ *           EIDG. TECHNISCHE HOCHSCHULE                         *
+ *           CH-8006 ZUERICH                                     *
+ *                                                               *
+ *****************************************************************)
+
+(*$T-,O+,R+   COMPILE WITH STACK OVERFLOW TEST AND
+              ROUNDING INSTRUCTIONS*)
+
+CONST NOP = 46000B, NILVAL = 200000B,
+   JMPCST = 61650000004000000000B, EQJMP = 04000000004600046000B,
+   MAX10 = 31463146314631463138B, MASK = -777777B,
+   MAXLABS = 20, MAXEXLABS = 10, JMPMAX = 49,
+   CSTMAX = 40, CODMAX = 1000, UNDMAX = 70,
+   DISPLIMIT = 20, PTLIMIT = 10, FILLIMIT = 10,
+   MAXLEVEL = 7,
+   (* DONT INCREASE WITHOUT INCREASING UPPER BOUND OF RG3 TOO *)
+   WORDLENGTH = 60,
+
+   PROCDR = -1, OBJ = +1, (*FOR PMDFILE*)
+
+   GETC = 101B, PUTC = 103B,
+   (*ADDRESSES OF RESIDENT STANDARD ROUTINES*)
+
+   ASSERR = 170B, INXERR = 171B, DIVERR = 172B, STOFLERR = 174B,
+   (*RUNTIME ERROR EXITS*)
+
+   INPT = 212B, OUTPT = 233B;
+   (* ADDRESSES OF STANDARD FILES INPUT AND OUTPUT *)
+
+TYPE CTP = ^CONTEXTTABLE;
+   CWORD = ARRAY [1..10] OF CHAR;
+   ADDRESS = 0..177777B ;
+   SHRTINT = -377777B .. +377777B;
+   BITRANGE = 0 .. 60; RG3 = 0 .. 7;
+   ATTRKIND = (VARBL,SVAL,LVAL,LCOND);
+   ATTR = RECORD TYPTR : CTP ;
+             CASE KIND : ATTRKIND OF
+                VARBL: (ACCESS : (DRCT,INDRCT,INXD) ;
+                        BREG : RG3 ; DPLMT : SHRTINT ;
+                        CASE PCKD : BOOLEAN OF
+                           FALSE: ;
+                           TRUE: (BITADR, BITSZ : BITRANGE)) ;
+                SVAL: (VAL : SHRTINT) ;
+                LVAL: (CTERM : SHRTINT) ;
+                LCOND: (JMP : 0 .. 3 ; ARITH : BOOLEAN)
+          END ;
+   (*DESCRIBES EXPRESSIONS TO BE COMPILED.   EXAMPLES:
+      VARBL:      DRCT:                I                    **)
+                  INDRCT:              INPUT^                *)
+                  INXD:                A[K]                  *)
+      SVAL:                            4                    **)
+      LVAL:                            2*I - 1               *)
+      LCOND:      ARITH:               X >= 4.1              *)
+                  NOT ARITH:           B < TRUE              *)
+
+      *) RESULT OF CODEGENERATION IN REGISTER X-RP
+      **) NO CODE GENERATION UNTIL NOW*)
+
+
+   OPTPWR = (NOOPT,PUREP,POSP,NEGP);
+   IDCLASS = (TYPES,KONST,PROC,VARS,FIELD,TAGFIELD,DUMMYCLASS);
+   TYPFORM = (NUMERIC,SYMBOLIC,POINTER,POWER,
+              ARRAYS,RECORDS,CLASSS,FILES);
+   IDKINDS = (ACTUAL,FORMAL);
+   WHERE = (BLOCK,CWITH,VWITH);
+   PKINDS = PROCDR .. OBJ; (*FOR PMDFILE*)
+
+VAR PARMLIST : RECORD    ICO : ADDRESS ;
+                         ERRFLAG : BOOLEAN ;
+                         ERRNRS : ARRAY [0..3] OF POWERSET 0..31 ;
+                         LOADPT : ADDRESS ;
+                         LIMCODE : ADDRESS ;
+                         LPJMPTAB : ADDRESS ;
+                         EXTFLAGS : POWERSET 0..4 ;
+                         ENTRYPT : ADDRESS
+               END ;
+   JMPTAB : ARRAY [0..JMPMAX] OF INTEGER;
+   JMPIX : SHRTINT;
+   (*TRANSFER VECTOR FOR CALLS OF FORWARD DECLARED PROCEDURES AND
+    GOTO STATEMENTS LEADING OUT OF PROCEDURES*)
+
+   CSTTB : ARRAY [1..CSTMAX] OF
+      RECORD VALU : INTEGER; INX : SHRTINT  END;
+   LCX : SHRTINT;
+   (*CONTAINS ALL CONSTANTS C, ABS(INT(C)) >= 2**17, OCCURRING IN THE
+    PROCEDURE ACTUALLY BEING COMPILED TOGETHER WITH AN INDEX INTO
+    UNDLAB WHERE THEIR OCCURRENCES IN THE CODE OF THIS PROCEDURE
+    ARE CHAINED*)
+
+   PILEV,FILEV : ARRAY [0..MAXLEVEL] OF SHRTINT;
+   PFL : ARRAY[0..FILLIMIT] OF ADDRESS;
+   FILPTS : ARRAY [0..FILLIMIT] OF CTP;
+   PFTOP,FILTOP : SHRTINT;
+   (*PFL CONTAINS THE ADDRESSES OF LOCAL CLASSES,
+      PILEV CONTAINS POINTERS INTO PFL, PFTOP = TOP OF PFL.
+    FILPTS CONTAINS POINTERS TO ENTRIES FOR LOCAL FILES,
+      FILEV CONTAINS POINTERS INTO FILPTS, FILTOP = TOP OF FILPTS*)
+
+   EXTAB : ARRAY [1..MAXEXLABS] OF
+      PACKED RECORD EXVAL,JMPTABIX : SHRTINT END;
+   CEXTABIX : SHRTINT;
+   (*CONTAINS THE EXPLICITLY DECLARED LABELS OF ALL PROCEDURES
+    NOT YET CLOSED, TOGETHER WITH THEIR CORRESPONDING INDEX
+    INTO JMPTAB*)
+
+   LABTAB : ARRAY [1..MAXLABS] OF
+      PACKED RECORD LABVAL,FLD2,FLD3 : SHRTINT  END;
+   CLABIX : SHRTINT;
+   (*CONTAINS ALL LABELS MET SO FAR IN THE BODY OF THE PROCEDURE
+    ACTUALLY BEING COMPILED, TOGETHER WITH INFORMATION WHETHER
+    LABEL DEFINITION (<LABEL>:) ALREADY FOUND OR NOT (FLD2).
+    IN THE FORMER CASE FLD3 CONTAINS THE CORRESPONDING ADDRESS,
+    WHERE IN THE LATTER CASE FLD3 CONTAINS AN INDEX INTO UNDLAB
+    WHERE THE OCCURRENCES ARE CHAINED*)
+
+   UNDLAB : ARRAY [1..UNDMAX] OF
+      PACKED RECORD SUCC, PLACE : SHRTINT ;
+                    LFTSH : BITRANGE ;
+               END ;
+   CHNIX : SHRTINT;
+   (*ACTS AS LISTSTRUCTURE, CHAINING OCCURRENCES OF CONSTANTS AND
+    JUMPS TO NOT YET REACHED LABELS IN THE CODE OF THE PROCEDURE
+    ACTUALLY BEING COMPILED.
+    CHNIX = HEAD OF FREE LIST*)
+
+   PTLIST : ARRAY [0..PTLIMIT] OF
+      RECORD HNAME : ALFA; PPTR : CTP END;
+   PTX : SHRTINT;
+   (*PTLIST CONTAINS NAMES OF YET UNDECLARED CLASSES AND
+      POINTERS TO THE CORRESPONDING POINTER-TYPE ENTRIES
+    PTX = TOP OF PTLIST *)
+
+   ERRLIST : ARRAY [1..10] OF
+      PACKED RECORD POS,NMR : SHRTINT  END;
+   ERRINX,CHCNT : SHRTINT; EOLFLAG,ERR : BOOLEAN;
+   (*ERRLIST CONTAINS THE POSITIONS AND NUMBERS OF THE ERRORS
+      ON ONE LINE

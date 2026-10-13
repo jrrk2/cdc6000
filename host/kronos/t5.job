@@ -1,0 +1,40 @@
+T5.
+USER,GUEST,GUEST.
+$NORERUN.
+$SETTL,7777.
+$COMPASS.
+$LOAD,LGO.
+$EXECUTE.
+***
+*** T5 COMPLETE
+***
+EXIT.
+$DAYFILE.
+***
+*** T5 FAILED
+***
+~eor
+          IDENT  T5
+          ENTRY  T5
+          SYSCOM B1
+          LIST   G,X
+INPUT     FILEB  IBUF,IBL
+OUTPUT    FILEB  OBUF,OBL
+LINE      BSS    10
+T5        BSS    0
+LOOP      READC  INPUT,LINE,10
+          SA1    INPUT
+          BX6    X1
+          SA6    SAVE
+          WRITEC OUTPUT,LINE
+          SA1    SAVE
+          EQ     LOOP
+SAVE      DATA   0
+IBUF      BSS    101
+IBL       EQU    *-IBUF
+OBUF      BSS    101
+OBL       EQU    *-OBUF
+          END    T5
+~eor
+HELLO WORLD
+SECOND LINE

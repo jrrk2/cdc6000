@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+// usage: kj job <deck> | kj shutdown
+const net = require('net'), path = require('path');
+const SOCK = process.env.KD_SOCK || '/tmp/claude-1000/kd.sock';
+const [cmd, arg] = process.argv.slice(2);
+const req = cmd === 'job' ? { cmd, deck: path.resolve(arg) } : { cmd };
+const s = net.connect(SOCK, () => s.write(JSON.stringify(req) + '\n'));
+s.on('data', d => process.stdout.write(d));
+s.on('error', e => { console.error('kd not running:', e.message); process.exit(2); });
+s.on('close', () => process.exit(0));

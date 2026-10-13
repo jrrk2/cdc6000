@@ -1,0 +1,19 @@
+T3.
+USER,GUEST,GUEST.
+$NORERUN.
+$SETTL,7777.
+$COMPASS.
+$CATLIST,LO=F.
+***
+*** T3 COMPLETE
+***
+EXIT.
+$DAYFILE.
+***
+*** T3 FAILED
+***
+~eor
+          IDENT  TEST
+          ENTRY  TEST
+TEST      DATA   0
+          END

@@ -1,0 +1,25 @@
+T4.
+USER,GUEST,GUEST.
+$NORERUN.
+$SETTL,7777.
+$COMPASS.
+$LOAD,LGO.
+$EXECUTE.
+***
+*** T4 COMPLETE
+***
+EXIT.
+$DAYFILE.
+***
+*** T4 FAILED
+***
+~eor
+          IDENT  TEST
+          ENTRY  TEST
+          SYSCOM B1
+TEST      BSS    0
+          SA1    =10HHELLO KRON
+          MESSAGE MSG,0
+          ENDRUN
+MSG       DATA   C*HELLO FROM COMPASS*
+          END    TEST

@@ -1,0 +1,208 @@
+    END (*WHILE NO = 7*) ;
+    GATTR := LATTR
+  END (*IF LFG OR (NO = 7)*)
+END (*SIMPLEEXP*) ;
+
+PROCEDURE EXPRESSION ;
+VAR LATTR : ATTR ; LRELOPCL, LCST : SHRTINT ;
+  LOF,BT1,BT2 : BOOLEAN ; AT : ADDRESS ;
+BEGIN SIMPLEEXP ;
+  IF NO = 8 THEN (*RELOP*)
+  BEGIN LOF := TRUE ;
+    WITH GATTR DO
+    IF (KIND = SVAL) AND ((CL = 7) OR (VAL = 0) AND (TYPTR <> BOOLPTR) AND
+    NOT (CL IN [1,3])) THEN
+    BEGIN LOF := FALSE ; LCST := VAL END ELSE
+    BEGIN IF TYPTR <> NIL THEN
+      IF TYPTR^.FORM IN [ARRAYS,RECORDS] THEN
+      BEGIN IF ACCESS = DRCT THEN
+        BEGIN RP := RP + 1 ; IF RP = 6 THEN ERROR(33) END ;
+        DPLMT := DPLMT - 1 ; LOADADR(GATTR,RP) ;
+      END ELSE TRANSFER(GATTR,RP)
+    END ;
+    WITH LATTR DO
+    BEGIN TYPTR := GATTR.TYPTR ; KIND := LCOND END ;
+    LRELOPCL := CL ; INSYMBOL ; SIMPLEEXP ;
+    IF (LATTR.TYPTR <> NIL) AND (GATTR.TYPTR <> NIL) THEN
+    BEGIN WITH GATTR DO
+      IF (KIND = SVAL) AND (VAL = 0) AND (TYPTR <> BOOLPTR) AND
+      NOT (LRELOPCL IN [2,4]) AND LOF THEN LOF := FALSE ELSE
+      BEGIN IF TYPTR^.FORM IN [RECORDS,ARRAYS] THEN
+        BEGIN DPLMT := DPLMT - 1 ; LOADADR(GATTR,6) ;
+          IF ACCESS = DRCT THEN RP := RP + 1 ;
+        END ELSE TRANSFER(GATTR,RP)
+      END ;
+      IF LOF THEN
+      BEGIN RP1 := RP ; RP := RP - 1 END ;
+      IF LRELOPCL = 7 THEN (*IN*)
+      BEGIN IF (GATTR.TYPTR^.FORM = POWER) AND (GATTR.TYPTR^.ELSET =
+        LATTR.TYPTR) OR (GATTR.TYPTR = PNUMPTR) AND (LATTR.TYPTR^.FORM =
+        NUMERIC) THEN
+        BEGIN IF LOF THEN
+          BEGIN GEN15(63B,7,RP,0) ; GEN15(23B,RP,7,RP1) ;
+            GEN15(20B,RP,0,59) ;
+          END ELSE GEN15(20B,RP,0,59-LCST) ;
+          WITH LATTR DO
+          BEGIN JMP := 2 ; ARITH := TRUE END ;
+        END ELSE ERROR(50)
+      END (*IF LRELOPCL = 7*) ELSE
+      BEGIN IF (LATTR.TYPTR = BOOLPTR) AND (GATTR.TYPTR = BOOLPTR) THEN
+        BEGIN CASE LRELOPCL OF
+         1: BEGIN GEN15(15B,RP,RP1,RP) ; LATTR.JMP := 0 END ;
+         2: BEGIN GEN15(15B,RP,RP,RP1) ; LATTR.JMP := 1 END ;
+         3: BEGIN GEN15(15B,RP,RP1,RP) ; LATTR.JMP := 1 END ;
+         4: BEGIN GEN15(15B,RP,RP,RP1) ; LATTR.JMP := 0 END ;
+         5: BEGIN GEN15(13B,RP,RP,RP1) ; LATTR.JMP := 0 END ;
+         6: BEGIN GEN15(13B,RP,RP,RP1) ; LATTR.JMP := 1 END
+        END (*CASE*) ;
+        LATTR.ARITH := FALSE
+      END (*IF*) ELSE
+      BEGIN BT1 := LATTR.TYPTR^.FORM = NUMERIC ;
+        BT2 := GATTR.TYPTR^.FORM = NUMERIC ;
+        IF BT1 AND (GATTR.TYPTR = REALPTR) THEN
+        BEGIN IF LOF THEN PACKANDNORM(RP) ;
+          LATTR.TYPTR := REALPTR
+        END ;
+        IF BT2 AND (LATTR.TYPTR = REALPTR) THEN
+        BEGIN IF LOF THEN PACKANDNORM(RP1) ;
+          GATTR.TYPTR := REALPTR
+        END ;
+        IF BT1 AND BT2 OR (LATTR.TYPTR = GATTR.TYPTR) AND (LATTR.TYPTR^.FORM
+        <= POINTER) OR (LATTR.TYPTR^.FORM = POINTER) AND (GATTR.TYPTR =
+        NILPTR) OR (GATTR.TYPTR^.FORM = POINTER) AND (LATTR.TYPTR =
+        NILPTR) THEN
+        BEGIN IF LATTR.TYPTR = REALPTR THEN IT := 31B ELSE IT := 37B ;
+          CASE LRELOPCL OF
+       1: BEGIN IF LOF THEN GEN15(IT,RP,RP,RP1) ; LATTR.JMP := 2
+          END ;
+       2: BEGIN IF LOF THEN GEN15(IT,RP,RP1,RP) ; LATTR.JMP := 3
+          END ;
+       3: BEGIN IF LOF THEN GEN15(IT,RP,RP,RP1) ; LATTR.JMP := 3
+          END ;
+       4: BEGIN IF LOF THEN GEN15(IT,RP,RP1,RP) ; LATTR.JMP := 2
+          END ;
+       5: BEGIN IF LOF THEN GEN15(37B,0,RP,RP1)
+                       ELSE BXIXJ(0,RP) ;
+            LATTR.JMP := 0
+          END ;
+       6: BEGIN IF LOF THEN GEN15(37B,0,RP,RP1)
+                       ELSE BXIXJ(0,RP) ;
+            LATTR.JMP := 1
+          END ;
+          END (*CASE*) ;
+          LATTR.ARITH := TRUE
+        END (*IF BT1 AND BT2 OR (...*) ELSE
+        IF (LATTR.TYPTR^.FORM = POWER) AND (GATTR.TYPTR^.FORM =
+        POWER) THEN
+        BEGIN IF (LATTR.TYPTR = GATTR.TYPTR) OR (LATTR.TYPTR = LAMPTR)
+          OR (GATTR.TYPTR = LAMPTR) THEN
+          BEGIN CASE LRELOPCL OF
+       1, 4: ERROR(88) ;
+          2: BEGIN IF LOF THEN GEN15(15B,0,RP,RP1) ELSE ERROR(89) ;
+               LATTR.JMP := 1
+             END ;
+          3: BEGIN IF LOF THEN GEN15(15B,0,RP1,RP) ELSE ERROR(89) ;
+               LATTR.JMP := 1
+             END ;
+       5, 6: BEGIN IF LOF THEN GEN15(13B,0,RP,RP1)
+                          ELSE BXIXJ(0,RP) ;
+               LATTR.JMP := LRELOPCL - 5
+             END ;
+            END (*CASE*) ;
+            LATTR.ARITH := TRUE
+          END ELSE ERROR(50)
+        END (*IF (LATTR...*) ELSE
+        IF (LATTR.TYPTR = GATTR.TYPTR) AND ((LATTR.TYPTR^.FORM =
+        RECORDS) OR (LATTR.TYPTR^.FORM = ARRAYS)) THEN
+        BEGIN IF LRELOPCL <= 4 THEN ERROR(94) ELSE
+          BEGIN IF RP >= 4 THEN ERROR(33) ;
+            GEN30(61B,7,0,GATTR.TYPTR^.SIZE) ; NOOP ; AT := IC ;
+            GEN15(53B,RP1,6,7) ; GEN15(53B,RP1+1,RP,7) ;
+            GEN15(37B,0,RP1+1,RP1) ; GEN30(03B,1,0,IC+2) ;
+            GEN30(61B,7,7,-1) ; GEN30(05B,7,0,AT) ; NOOP ;
+            WITH LATTR DO
+            BEGIN KIND := LCOND ; ARITH := TRUE ;
+              JMP := LRELOPCL - 5
+            END ;
+          END
+        END ELSE ERROR(50)
+      END (*IF <> BOOLPTRS*) ;
+    END (*IF LRELOPCL <= 6*)
+    END (*IF TYPTRS <> NIL*) ;
+    LATTR.TYPTR := BOOLPTR ;
+    GATTR := LATTR
+  END (*IF NO = 8*)
+END (*EXPRESSION*) ;
+
+(* ------------------------------------------------------------ *)
+
+PROCEDURE PASSPARAMS ;
+(*PERFORMS CODE GENERATION FOR PASSING PARAMETERS TO CALLED
+ PROCEDURE AND JUMPING TO ITS ENTRY*)
+VAR LPL,LPC,LDSP,IT2 : SHRTINT ; LPA,AT : ADDRESS; LPK,BT : BOOLEAN;
+    LFP : CTP ;
+BEGIN WITH CTPTR^ DO
+  BEGIN LPA := PROCADDR ; LPL := PROCLEVEL ;
+    LFP := FORMALS ; LPK := PROCKIND = ACTUAL
+  END ;
+  LDSP := 3 ; LPC := 0 ;
+  IF NO = 9 THEN (*(*)
+  BEGIN REPEAT
+    BEGIN IF LFP = NIL THEN
+      BEGIN IF LPK THEN
+        BEGIN ERROR(72) ; SKIP(49) ; GOTO 1 END ;
+        BT := FALSE
+      END ELSE
+      BT := LFP^.KLASS = PROC ;
+      INSYMBOL ;
+      IF BT THEN (*PROC/FCT TO BE PASSED*)
+      BEGIN IF NO <> 1 THEN (*ID*) ERROR(11) ELSE
+        BEGIN SEARCH ;
+          IF CTPTR = NIL THEN
+          BEGIN ERROR(31) ; CTPTR := UNDECPTR END ;
+          IF CTPTR^.KLASS <> PROC THEN ERROR(60) ELSE
+          BEGIN WITH CTPTR^ DO
+            BEGIN PT := LFP^.PROCTYPE ;
+              IF PROCTYPE <> CTPTR THEN (*PARAM. IS FCT*)
+              BEGIN IF (PT = LFP) OR (PROCTYPE <> PT) AND ((PROCTYPE^.FORM
+                <> NUMERIC) OR (PT^.FORM <> NUMERIC)) THEN ERROR(60)
+              END ELSE (*PARAM. IS PROC*)
+              IF PT <> LFP THEN ERROR(60) ;
+              IF CTPTR <= PREDEFP THEN
+              BEGIN ERROR(83) ; SKIP(49) ; GOTO 1 END ELSE
+              IF CTPTR <= EXTPTR THEN  (* SET BIT TO INFORM MONITOR *)
+              WITH PARMLIST DO EXTFLAGS := EXTFLAGS+[CTPTR^.SEGSIZE] ;
+              IF PROCTYPE <> NIL THEN
+              IF PROCKIND = ACTUAL THEN
+              BEGIN PT := FORMALS ; IT1 := 0 ; IT2 := 0 ;
+                WHILE PT <> NIL DO
+                BEGIN IF (PT^.KLASS = VARS) AND (PT^.VKIND = FORMAL)
+                  THEN APPEND(IT1,1,1) ELSE APPEND(IT1,1,0) ;
+                  IT2 := IT2 + 1 ; PT := PT^.NXTEL
+                END ;
+                APPEND(IT1,17-IT2,0) ; IF IT2 > 17 THEN ERROR(103) ;
+                GEN30(71B,6,0,PROCADDR) ;
+                IF IT1 <> 0 THEN
+                BEGIN GEN30(71B,0,0,IT1) ; GEN15(20B,0,0,43) ;
+                  GEN15(12B,6,6,0) ;
+                END ;
+                IF PROCLEVEL <> 0 THEN
+                BEGIN IF PROCLEVEL = LEVEL THEN GEN15(76B,1,5,0)
+                  ELSE LOADBASE(1,PROCLEVEL) ;
+                  GEN15(20B,1,0,18) ; GEN15(12B,6,6,1) ;
+                END
+              END ELSE
+              BEGIN IF PROCLEVEL = LEVEL THEN
+                GEN30(51B,1,5,PROCADDR) ELSE
+                BEGIN LOADBASE(1,PROCLEVEL) ; GEN30(52B,1,1,PROCADDR)
+                END ;
+                GEN15(10B,6,1,0)
+              END ;
+            END (*WITH CTPTR^*)
+          END (*IF CTPTR^.KLASS = PROC*) ;
+          INSYMBOL
+        END (*NO = 1*)
+      END ELSE (*EXPRESSION TO BE PASSED*)
+      BEGIN
+      B6DPL := LDSP ; EXPRESSION ;
+      IF GATTR.TYPTR <> NIL THEN

@@ -1,0 +1,208 @@
+      IF LATTR.KIND = SVAL THEN LATTR.VAL := LPSVAL ELSE
+      BEGIN GEN30(71B,0,0,LPSVAL) ; GEN15(12B,RP,RP,0) END ;
+      IF LATTR.TYPTR <> NIL THEN
+      IF LATTR.TYPTR^.FORM = NUMERIC THEN LATTR.TYPTR := PNUMPTR
+      ELSE LATTR.TYPTR := LATTR.TYPTR^.PWSET ;
+      IF NO <> 12 THEN (*]*)
+      BEGIN ERROR(37) ; LATTR.TYPTR := NIL END ELSE INSYMBOL ;
+      GATTR := LATTR
+    END ;
+  END (*IF NO = 11*) ELSE
+  BEGIN ERROR(42) ; GATTR.TYPTR := NIL END
+END (*FACTOR*) ;
+
+PROCEDURE TERM ;
+VAR LATTR : ATTR ; AT : ADDRESS ; BT1,BT2,BT3,BT4 : BOOLEAN ;
+    LEXP1, LEXP2, LMOPCL : SHRTINT ; LOPT : OPTPWR ;
+PROCEDURE CHECKDIV(FRP : RG3) ;
+(*DONOT USE WITH FRP = 7*)
+BEGIN IF GATTR.KIND = SVAL THEN
+  BEGIN IF GATTR.VAL = 0 THEN ERROR(102) ;
+  END ELSE
+  IF DIVCHECK THEN
+  BEGIN GEN30(71B,7,0,IC) ; GEN30(03B,0,FRP,DIVERR) END ;
+END (*DIVCHECK*) ;
+BEGIN FACTOR ;
+  IF NO = 6 THEN (*MULOP*)
+  BEGIN LOPT := NOOPT;
+    IF (GATTR.KIND = SVAL) AND (CL = 1) THEN
+    MULOPT(GATTR.VAL,LEXP1,LEXP2,LOPT) ;
+    IF LOPT = NOOPT THEN
+    BEGIN TRANSFER(GATTR,RP) ;
+      WITH LATTR DO
+      BEGIN TYPTR := GATTR.TYPTR ; KIND := LVAL ; CTERM := 0 END ;
+    END ELSE LATTR := GATTR ;
+    REPEAT LMOPCL := CL ; INSYMBOL ; FACTOR ;
+      IF (LATTR.TYPTR <> NIL) AND (GATTR.TYPTR <> NIL) THEN
+      BEGIN CASE LMOPCL OF
+(* * *) 1: BEGIN BT1 := LATTR.TYPTR^.FORM = NUMERIC ;
+           BT2 := GATTR.TYPTR^.FORM = NUMERIC ;
+           BT3 := LATTR.TYPTR = REALPTR ;
+           BT4 := GATTR.TYPTR = REALPTR ;
+           IF LOPT <> NOOPT THEN
+           BEGIN TRANSFER(GATTR,RP) ;
+             IF BT4 THEN
+             BEGIN TRANSFER(LATTR,RP) ; PACKANDNORM(RP) ;
+               LATTR.TYPTR := REALPTR ;
+               LOPT := NOOPT ; BT3 := TRUE ;
+             END ;
+             WITH LATTR DO
+             BEGIN KIND := LVAL ; CTERM := 0 END ;
+           END ELSE
+           BEGIN IF (GATTR.KIND = SVAL) AND NOT BT3 THEN
+             MULOPT(GATTR.VAL,LEXP1,LEXP2,LOPT) ;
+             IF LOPT = NOOPT THEN TRANSFER(GATTR,RP) ;
+           END ;
+           IF LOPT = NOOPT THEN BEGIN RP1 := RP ; RP := RP - 1 END ;
+           IF BT3 AND BT4 THEN MULTCODE(RP1) ELSE
+           IF BT1 AND BT2 THEN
+           BEGIN IF LOPT = NOOPT THEN
+             BEGIN GEN15(42B,RP,RP,RP1) ; GEN15(13B,0,0,0) ;
+               GEN15(36B,RP,RP,0)
+             END ELSE
+             BEGIN IF LEXP1 <> 0 THEN GEN15(20B,RP,0,LEXP1) ;
+               IF LOPT <> PUREP THEN
+               BEGIN GEN15(10B,0,RP,0) ; GEN15(20B,RP,0,LEXP2) ;
+                 IF LOPT = POSP THEN GEN15(36B,RP,RP,0)
+                                ELSE GEN15(37B,RP,RP,0) ;
+               END
+             END ;
+             LATTR.TYPTR := INTPTR ;
+           END ELSE
+           IF (BT1 AND BT4) OR (BT2 AND BT3) THEN
+           BEGIN IF BT1 THEN PACKANDNORM(RP) ELSE PACKANDNORM(RP1) ;
+             MULTCODE(RP1) ; LATTR.TYPTR := REALPTR
+           END ELSE ERROR(50)
+         END ;
+(* / *) 2: BEGIN TRANSFER(GATTR,RP) ;
+           IF GATTR.TYPTR^.FORM = NUMERIC THEN
+           BEGIN PACKANDNORM(RP) ; GATTR.TYPTR := REALPTR END ;
+           RP := RP - 1 ;
+           IF LATTR.TYPTR^.FORM = NUMERIC THEN
+           BEGIN PACKANDNORM(RP) ; LATTR.TYPTR := REALPTR END ;
+           IF (GATTR.TYPTR = REALPTR) AND (LATTR.TYPTR = REALPTR) THEN
+           BEGIN CHECKDIV(RP+1) ;
+             IF ROUNDING THEN GEN15(45B,RP,RP,RP+1)
+                         ELSE GEN15(44B,RP,RP,RP+1)
+           END ELSE ERROR(50) ;
+         END ;
+(* AND *) 3: BEGIN TRANSFER(GATTR,RP) ; RP := RP - 1 ;
+           IF (LATTR.TYPTR = GATTR.TYPTR) AND ((LATTR.TYPTR^.FORM =
+           POWER) OR (LATTR.TYPTR = BOOLPTR)) THEN GEN15(11B,RP,RP,RP+1)
+           ELSE ERROR(50)
+         END ;
+ (*DIV*) 4: BEGIN IF GATTR.KIND = SVAL THEN
+              MULOPT(GATTR.VAL,LEXP1,LEXP2,LOPT) ;
+           IF (LATTR.TYPTR^.FORM = NUMERIC) AND (GATTR.TYPTR^.FORM =
+           NUMERIC) THEN
+           BEGIN IF LOPT = PUREP THEN
+             BEGIN IF LEXP1 <> 0 THEN GEN15(21B,RP,0,LEXP1) ;
+               IF LATTR.TYPTR^.MIN < 0 THEN
+               BEGIN GEN15(13B,0,0,0) ; GEN15(36B,RP,RP,0) END
+             END ELSE
+             BEGIN TRANSFER(GATTR,RP) ; CHECKDIV(RP) ;
+               PACKANDNORM(RP) ; RP := RP - 1 ;
+               GEN15(27B,RP,0,RP) ;
+               GEN15(44B,RP,RP,RP+1) ; GEN15(26B,RP,7,RP) ;
+               GEN15(22B,RP,7,RP) ; GEN15(13B,0,0,0) ;
+              GEN15(36B,RP,RP,0) ;
+             END ;
+             LATTR.TYPTR := INTPTR
+           END ELSE ERROR(50)
+         END ;
+ (*MOD*) 5: BEGIN IF GATTR.KIND = SVAL THEN
+              MULOPT(GATTR.VAL,LEXP1,LEXP2,LOPT) ;
+           IF (LATTR.TYPTR^.FORM = NUMERIC) AND (GATTR.TYPTR^.FORM =
+           NUMERIC) THEN
+           BEGIN IF LOPT = PUREP THEN
+             BEGIN GEN15(10B,0,RP,0) ; GEN15(21B,0,0,LEXP1) ;
+               GEN15(20B,0,0,LEXP1) ; GEN15(37B,RP,RP,0) ;
+             END ELSE
+             BEGIN TRANSFER(GATTR,RP) ;
+               CHECKDIV(RP) ; GEN15(27B,6,0,RP) ; GEN15(24B,6,0,6) ;
+               RP1 := RP ; RP := RP - 1 ;
+               GEN15(27B,0,0,RP) ; GEN15(44B,6,0,6) ;
+               GEN15(26B,6,7,6) ; GEN15(22B,6,7,6) ;
+               GEN15(42B,6,RP1,6) ; GEN15(37B,RP,RP,6) ;
+             END ;
+             LATTR.TYPTR := INTPTR
+           END ELSE ERROR(50)
+         END ;
+         END (*CASE LMOPCL OF*)
+      END ;
+      LOPT := NOOPT
+    UNTIL NO <> 6 ; (*MULOP*)
+    GATTR := LATTR
+  END (*IF NO = 6*)
+END (*TERM*) ;
+
+PROCEDURE SIMPLEEXP ;
+VAR LATTR : ATTR ; LADOPCL : SHRTINT ; LFG,BT1,BT2 : BOOLEAN ;
+BEGIN LFG := FALSE ;
+  IF NO = 7 THEN (*ADDOP*)
+  BEGIN IF CL = 2 THEN LFG := TRUE ELSE IF CL = 3 THEN ERROR(51) ;
+    INSYMBOL ;
+  END ;
+  TERM ;
+  IF LFG OR (NO = 7) THEN
+  BEGIN WITH LATTR DO
+    BEGIN TYPTR := GATTR.TYPTR ; KIND := LVAL ; CTERM := 0 ;
+      IF TYPTR <> NIL THEN
+      BEGIN TRANSFER(GATTR,RP) ;
+        IF LFG THEN
+        BEGIN GEN15(13B,0,0,0) ;
+          IF (TYPTR^.FORM = NUMERIC) OR (TYPTR = REALPTR) THEN
+          GEN15(37B,RP,0,RP) ELSE ERROR(50)
+        END
+      END
+    END ;
+    WHILE NO = 7 DO
+    BEGIN LADOPCL := CL ; INSYMBOL ; TERM ;
+      IF (LATTR.TYPTR <> NIL) AND (GATTR.TYPTR <> NIL) THEN
+      BEGIN BT1 := LATTR.TYPTR^.FORM = NUMERIC ;
+        BT2 := GATTR.TYPTR^.FORM = NUMERIC ;
+        IF BT1 AND BT2 AND (GATTR.KIND = SVAL) THEN
+        BEGIN WITH LATTR DO
+          BEGIN TYPTR := INTPTR ;
+            CASE LADOPCL OF
+            1: CTERM := CTERM + GATTR.VAL ;
+            2: CTERM := CTERM - GATTR.VAL ;
+            3: ERROR(50)
+            END
+          END
+        END ELSE
+        BEGIN TRANSFER(GATTR,RP) ; RP1 := RP ; RP := RP - 1 ;
+          IF BT1 AND BT2 THEN
+          BEGIN LATTR.TYPTR := INTPTR ;
+            CASE LADOPCL OF
+            1: GEN15(36B,RP,RP,RP1) ;
+            2: GEN15(37B,RP,RP,RP1) ;
+            3: ERROR(50)
+            END
+          END ELSE
+          BEGIN IF BT1 THEN
+            BEGIN PACKANDNORM(RP) ; LATTR.TYPTR := REALPTR
+            END ELSE
+            IF BT2 THEN
+            BEGIN PACKANDNORM(RP1) ; GATTR.TYPTR := REALPTR
+            END ;
+            IF (LATTR.TYPTR = REALPTR) AND (GATTR.TYPTR = REALPTR) THEN
+            BEGIN IF LADOPCL <= 2 THEN
+              BEGIN IF ROUNDING THEN GEN15(33B+LADOPCL,RP,RP,RP1)
+                               ELSE GEN15(27B+LADOPCL,RP,RP,RP1) ;
+                GEN15(24B,RP,0,RP)
+              END ELSE ERROR(50)
+            END ELSE
+            IF LATTR.TYPTR = GATTR.TYPTR THEN
+            BEGIN IF (LATTR.TYPTR = BOOLPTR) AND (LADOPCL = 3) THEN
+              GEN15(12B,RP,RP,RP1) ELSE
+              IF LATTR.TYPTR^.FORM = POWER THEN
+              CASE LADOPCL OF
+              1: GEN15(13B,RP,RP,RP1) ; (*NON-STANDARD PASCAL*)
+              2: GEN15(15B,RP,RP,RP1) ;
+              3: GEN15(12B,RP,RP,RP1) ;
+              END ELSE ERROR(50)
+            END ELSE ERROR(50)
+          END
+        END
+      END

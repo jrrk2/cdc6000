@@ -1,0 +1,208 @@
+      END ;
+      IF PT = NIL THEN
+      BEGIN SKIP(49);  GOTO 10  END;
+      IF NO = 15 THEN  (* SY = , *)
+      BEGIN
+         PT := PT^.RECVAR;
+         REPEAT
+            IF PT = NIL THEN
+            BEGIN ERROR(66);  SKIP(49);  GOTO 10  END;
+            INSYMBOL;
+            IF NO = 1 THEN
+            BEGIN SEARCH;
+               IF CTPTR = NIL THEN
+               BEGIN ERROR(31);  SKIP(49);  GOTO 10 END;
+               IF CTPTR^.KLASS <> KONST THEN
+               BEGIN ERROR(63);  SKIP(49);  GOTO 10 END;
+               WITH PT^ DO
+               IF (CASETYPE^.FORM = SYMBOLIC) AND
+                   (CTPTR^.CONTYPE <> CASETYPE)  OR
+                 (CASETYPE^.FORM = NUMERIC) AND
+                   (CTPTR^.CONTYPE <> INTPTR) THEN
+               BEGIN ERROR(73);  SKIP(49);  GOTO 10 END;
+               IVAL := CTPTR^.VALUES;
+            END ELSE
+            IF (NO <> 2) OR (CL IN [2,3]) THEN
+            BEGIN ERROR(63);  SKIP(49);  GOTO 10 END ELSE
+            WITH PT^ DO
+            IF (CL = 1) AND (CASETYPE^.FORM <> NUMERIC)
+               OR (CL = 4) AND (CASETYPE <> CHARPTR) THEN
+            BEGIN ERROR(73);  SKIP(49);  GOTO 10 END;
+            CTPTR := PT^.VARIANTS;  BT1 := FALSE;
+            WHILE (CTPTR <> NIL) AND NOT BT1 DO
+            WITH CTPTR^ DO
+               IF CASEVAL = IVAL THEN BT1 := TRUE
+                                 ELSE CTPTR := NXTEL;
+            IF CTPTR = NIL THEN
+            BEGIN IT := PT^.CASESIZE;  PT := NIL END ELSE
+            BEGIN IT := CTPTR^.CASESIZE;  PT := CTPTR^.VARIANTS END;
+            INSYMBOL;
+         UNTIL NO <> 15;
+      END ELSE IT := PT^.SIZE;
+      GEN30(72B,6,RP,IT) ; GEN15(54B,6,RP,0) ;
+      GEN30(70B,0,RP,IT1) ; GEN15(37B,0,0,6) ;
+      GEN15(10B,6,RP,0) ; GEN30(03B,2,0,IC + (CP+1) DIV 2) ;
+      GEN15(54B,6,RP,0) ; GEN30(71B,6,0,NILVAL) ;
+      NOOP ; RP := RP - 1 ; TRANSFER(GATTR,6) ;
+      IF NO <> 10 THEN  (* SY <> ) *)
+      BEGIN ERROR(48) ; SKIP(49) END ELSE INSYMBOL ;
+10:   END (* ALLC *) ;
+
+PROCEDURE PCK ;
+   VAR LPT : CTP ; LLO, LHI : SHRTINT ;
+BEGIN
+   IF NO <> 9 THEN  (* SY <> ( *)
+   BEGIN ERROR(79) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; VARIAB ;
+   WITH GATTR DO
+   IF TYPTR <> NIL THEN
+   BEGIN
+      WITH TYPTR^ DO
+      IF (FORM <> ARRAYS) OR (AELTYPE <> CHARPTR) THEN ERROR(44) ELSE
+      BEGIN LPT := INXTYPE ; DPLMT := DPLMT + (ALFALENG-1) - LO ;
+         LLO := LO ; LHI := HI - (ALFALENG - 1) ;
+      END ;
+      LOADADR(GATTR,1) ; RP := 1 ;
+   END ELSE LPT := INTPTR;
+   IF NO <> 15 THEN
+   BEGIN ERROR(80) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; EXPRESSION ;
+   WITH GATTR DO
+   IF TYPTR <> NIL THEN
+   BEGIN
+      IF (TYPTR^.FORM <> NUMERIC) OR (LPT^.FORM <> NUMERIC) THEN
+      BEGIN IF TYPTR <> LPT THEN ERROR(44) END ELSE
+      BEGIN
+         TRANSFER(GATTR,2) ; RP := 2 ;
+         IF INXCHECK THEN CHECKBNDS(2,LLO,LHI,INXERR) ;
+         GEN15(36B,0,1,2) ;
+         GEN30(61B,7,0,-ALFALENG) ; GEN15(13B,6,0,0) ;
+         NOOP ; IT := IC ;
+         GEN30(61B,7,7,1) ; GEN15(53B,1,0,7) ;
+         GEN15(20B,6,0,6) ; GEN15(12B,6,1,6) ;
+         GEN30(05B,7,0,IT) ; RP := 0
+      END ;
+   END ;
+   IF NO <> 15 THEN
+   BEGIN ERROR(80) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; VARIAB ;
+   IF GATTR.TYPTR <> NIL THEN
+      IF GATTR.TYPTR <> ALFAPTR THEN ERROR(44)
+                                ELSE TRANSFER(GATTR,6) ;
+   IF NO <> 10 THEN  (* SY <> ) *)
+   BEGIN ERROR(48) ;SKIP(49) ; END ELSE INSYMBOL ;
+10:   END (* PCK *) ;
+
+PROCEDURE UNPCK ;
+   VAR LPT : CTP ; LLO, LHI : SHRTINT ;
+BEGIN
+   IF NO <> 9 THEN  (* SY <> ( *)
+   BEGIN ERROR(79) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; EXPRESSION ;
+   IF GATTR.TYPTR <> NIL THEN
+      IF GATTR.TYPTR <> ALFAPTR THEN ERROR(44)
+                                ELSE TRANSFER(GATTR,1) ;
+   IF NO <> 15 THEN
+   BEGIN ERROR(80) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; VARIAB ;
+   WITH GATTR DO
+   IF TYPTR <> NIL THEN
+   BEGIN
+      WITH TYPTR^ DO
+      IF (FORM <> ARRAYS) OR (AELTYPE <> CHARPTR) THEN ERROR(44) ELSE
+      BEGIN LPT := INXTYPE ; DPLMT := DPLMT + (ALFALENG-1) - LO ;
+      LLO := LO ; LHI := HI - (ALFALENG - 1) ;
+      END ;
+      LOADADR(GATTR,2) ; RP := 2 ;
+   END ELSE LPT := INTPTR;
+   IF NO <> 15 THEN
+   BEGIN ERROR(80) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; EXPRESSION ;
+   WITH GATTR DO
+   IF TYPTR <> NIL THEN
+   BEGIN
+      IF (TYPTR^.FORM <> NUMERIC) OR (LPT^.FORM <> NUMERIC) THEN
+      BEGIN IF TYPTR <> LPT THEN ERROR(44) END ELSE
+      BEGIN
+         TRANSFER(GATTR,3) ; RP := 3 ;
+         IF INXCHECK THEN CHECKBNDS(3,LLO,LHI,INXERR) ;
+         GEN15(36B,2,2,3) ;
+         GEN30(61B,7,0,-ALFALENG) ; GEN15(43B,0,0,54) ;
+         NOOP ; IT := IC ;
+         GEN30(61B,7,7,1) ; GEN15(20B,1,0,6) ;
+         GEN15(15B,6,1,0) ; GEN15(53B,6,2,7) ;
+         GEN30(05B,7,0,IT) ;
+      END
+   END ;
+   IF NO <> 10 THEN  (* SY <> ) *)
+   BEGIN ERROR(48) ;SKIP(49) ; END ELSE INSYMBOL ;
+10:   END (* UNPCK *) ;
+
+PROCEDURE INSAPP(LPSW : SHRTINT) ;
+VAR LVALUE : SHRTINT ; LOF : BOOLEAN ;
+BEGIN
+   IF NO <> 9 THEN  (* SY <> ( *)
+   BEGIN ERROR(79) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ;
+   IF LPSW = 8 THEN EXPRESSION ELSE VARIAB ;
+   IF GATTR.TYPTR <> NIL THEN
+      IF GATTR.TYPTR^.FORM <> NUMERIC THEN ERROR(44)
+                                      ELSE TRANSFER(GATTR,1) ;
+   IF NO <> 15 THEN
+   BEGIN ERROR(80) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ; EXPRESSION ;
+   LOF := FALSE ;
+   WITH GATTR DO
+   IF TYPTR <> NIL THEN
+      IF TYPTR^.FORM <> NUMERIC THEN ERROR(44) ELSE
+      IF KIND = SVAL THEN
+      BEGIN LOF := TRUE ; LVALUE := VAL ; RP := 2 END
+      ELSE TRANSFER(GATTR,2) ;
+   IF NO <> 15 THEN
+   BEGIN ERROR(80) ; SKIP(49) ; GOTO 10 END ;
+   INSYMBOL ;
+   IF LPSW = 8 THEN VARIAB ELSE EXPRESSION ;
+   IF GATTR.TYPTR <> NIL THEN
+      IF GATTR.TYPTR^.FORM <> NUMERIC THEN ERROR(44)
+                                      ELSE TRANSFER(GATTR,3) ;
+   IF LOF THEN
+   BEGIN IF LVALUE <> 0 THEN GEN15(20B,1,0,LVALUE) END ELSE
+   BEGIN GEN15(63B,7,2,0) ; GEN15(22B,1,7,1) END ;
+   GEN15(12B,6,1,3) ;
+   IF LPSW = 8 THEN GEN15(54B,6,3,0) ELSE GEN15(54B,6,1,0) ;
+   IF NO <> 10 THEN  (* SY <> ) *)
+   BEGIN ERROR(48) ; SKIP(49) ; END ELSE INSYMBOL ;
+10:   END (* INSAPP *) ;
+
+PROCEDURE READIR;
+   CONST RD = 110B ;
+BEGIN IF NO <> 9 THEN (* ( *)
+   BEGIN ERROR(79);  SKIP(49);  GOTO 10  END;
+   REPEAT
+      INSYMBOL;  VARIAB;
+      IF GATTR.TYPTR <> NIL THEN
+         IF GATTR.TYPTR = CHARPTR THEN
+         BEGIN (* INLINE CODE *)
+            IF GATTR.ACCESS <> DRCT THEN
+            BEGIN GEN15(10B,6,1,0) ; IT := LC + TCT ;
+               IF TCT = TMAX THEN TMAX := TMAX + 1 ;
+               GEN30(51B,6,5,IT) ;
+            END ;
+            GEN30(61B,7,0,INPT+1);  JUMPTO(GETC) ;
+            GEN30(51B,1,0,INPT);  GEN15(53B,1,1,0);
+            GEN15(10B,6,1,0);
+            IF GATTR.ACCESS <> DRCT THEN GEN30(51B,1,5,IT);
+            TRANSFER(GATTR,6);
+         END ELSE
+         BEGIN LOADADR(GATTR,1) ;
+            IF GATTR.TYPTR^.FORM = NUMERIC THEN
+               GEN15(66B,7,0,0)  ELSE
+            IF GATTR.TYPTR = REALPTR THEN
+               GEN30(61B,7,0,1)  ELSE ERROR(44) ;
+            JUMPTO(RD) ;
+         END;  RP := 0;
+   UNTIL NO <> 15 (* , *) ;
+   IF NO <> 10 THEN (* ) *)
+   BEGIN ERROR(48);  SKIP(49)  END ELSE INSYMBOL ;
+10:   END (*READIR*) ;
+

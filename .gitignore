@@ -1,0 +1,39 @@
+# third-party checkouts, downloads and page scans (not ours; large)
+/p2c/
+/src/
+/dl/
+/pages/
+
+# build products: regenerate with the scripts in host/, nfs/, rtl/, fpga/
+/rtl/obj_dir/
+/rtl/r2/
+/rtl/r3/
+/nfs/build/
+/nfs/export_*/
+/nfs/t/
+/nfs/shell_t*.txt
+/nfs/shell_ed*.txt
+/host/cdcemu
+/host/pascal_host
+/host/*.o
+/host/runtime*.asm
+/host/runtime*.img
+/host/runtime*.img.sym
+/host/nfsc.img
+/host/stage2/*.img
+/host/stage3/*.img
+/tests/*.mem
+/tests/*.log
+**/sim_obj/
+**/sim_obj.log
+*.pyc
+__pycache__/
+
+# local logs and captures
+*.jou
+*.backup.log
+/updatemem.log
+/board.pcap
+fpga/vc707-eth/updatemem.log
+*~
+/nfs/.out

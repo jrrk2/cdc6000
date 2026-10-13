@@ -1,0 +1,341 @@
+{ ------------------------------------------------------------------ }
+{ Host runtime for the CDC 6000 Pascal compiler (inserted by mkfpc.py) }
+{ ------------------------------------------------------------------ }
+CONST
+   M60 = 1152921504606846975;     { 2**60 - 1 }
+   P59 = 576460752303423488;      { 2**59     }
+   CTSIZE = 4000;
+   LCSSIZE = 4000;
+
+VAR
+   CT : ARRAY [0..3999] OF CONTEXTTABLE;
+   CTMAX : INT64;
+   CTTOP : INT64;
+   LCS : ARRAY [0..3999] OF LCSLABS;
+   LCSTOP, LCSLIM : INT64;
+   POW2 : ARRAY [0..61] OF INT64;
+   PASCLGOBUF : INT64;
+   PMDBUF : PMDREC;
+   INCHBUF, OUTCHBUF : TCHAR;
+   CINPUT : PTCHAR;
+   COUTPUT : PTCHAR;
+   PASCLGOF, PMDF : TEXT;
+   OUTCOL : INT64;
+   TOASCII : ARRAY [0..63] OF CHAR;
+   FROMASCII : ARRAY [0..255] OF INT64;
+   RTI : INT64;
+
+FUNCTION PAT(V : INT64) : INT64;          { value -> 60 bit pattern }
+BEGIN
+   IF V >= 0 THEN PAT := V ELSE PAT := V + M60
+END;
+
+FUNCTION VAL60(P : INT64) : INT64;        { 60 bit pattern -> value }
+BEGIN
+   IF P >= P59 THEN VAL60 := P - M60 ELSE VAL60 := P
+END;
+
+FUNCTION SHIFT60(P, B : INT64) : INT64;   { end-off shift of a 60 bit pattern }
+BEGIN
+   IF B >= 60 THEN SHIFT60 := 0
+   ELSE IF B >= 0 THEN SHIFT60 := (P MOD POW2[60 - B]) * POW2[B]
+   ELSE IF B <= -60 THEN SHIFT60 := 0
+   ELSE SHIFT60 := P DIV POW2[-B]
+END;
+
+FUNCTION ORBITS(A, B : INT64) : INT64;    { bitwise or of two non-negative patterns }
+VAR R, K : INT64;
+BEGIN
+   R := 0;
+   FOR K := 0 TO 59 DO
+      IF ((A DIV POW2[K]) MOD 2 = 1) OR ((B DIV POW2[K]) MOD 2 = 1) THEN
+         R := R + POW2[K];
+   ORBITS := R
+END;
+
+PROCEDURE APPEND(VAR A : INT64; B, C : INT64);
+BEGIN
+   A := VAL60(ORBITS(SHIFT60(PAT(A), B), PAT(C)))
+END;
+
+PROCEDURE INSERT(A, B : INT64; VAR C : INT64);
+BEGIN
+   C := VAL60(ORBITS(SHIFT60(PAT(A), B), PAT(C)))
+END;
+
+FUNCTION CINT(C : TCHAR) : INT64; OVERLOAD;
+BEGIN CINT := ORD(C) END;
+
+FUNCTION CINT(A : INT64) : INT64; OVERLOAD;
+BEGIN CINT := A END;
+
+FUNCTION CINT(R : REAL) : INT64; OVERLOAD;     { CDC 60 bit floating point word }
+VAR E : INT64; NEG : BOOLEAN; COEF, EX, PW : INT64;
+BEGIN
+   IF R = 0 THEN CINT := 0 ELSE
+   BEGIN
+      NEG := R < 0; IF NEG THEN R := -R;
+      E := 0;
+      WHILE R >= 1 DO BEGIN R := R / 2; E := E + 1 END;
+      WHILE R < 0.5 DO BEGIN R := R * 2; E := E - 1 END;
+      COEF := ROUND(R * 281474976710656.0);     { 48 bit coefficient, nearest }
+      IF COEF >= 281474976710656 THEN BEGIN COEF := COEF DIV 2; E := E + 1 END;
+      EX := E - 48 + 1024;
+      PW := EX * 281474976710656 + COEF;
+      IF NEG THEN CINT := -PW ELSE CINT := PW
+   END
+END;
+
+FUNCTION CCHR(N : INT64) : TCHAR;
+BEGIN
+   CASE N OF
+      0: CCHR := D00;  1: CCHR := D01;  2: CCHR := D02;  3: CCHR := D03;
+      4: CCHR := D04;  5: CCHR := D05;  6: CCHR := D06;  7: CCHR := D07;
+      8: CCHR := D08;  9: CCHR := D09; 10: CCHR := D10; 11: CCHR := D11;
+     12: CCHR := D12; 13: CCHR := D13; 14: CCHR := D14; 15: CCHR := D15;
+     16: CCHR := D16; 17: CCHR := D17; 18: CCHR := D18; 19: CCHR := D19;
+     20: CCHR := D20; 21: CCHR := D21; 22: CCHR := D22; 23: CCHR := D23;
+     24: CCHR := D24; 25: CCHR := D25; 26: CCHR := D26; 27: CCHR := D27;
+     28: CCHR := D28; 29: CCHR := D29; 30: CCHR := D30; 31: CCHR := D31;
+     32: CCHR := D32; 33: CCHR := D33; 34: CCHR := D34; 35: CCHR := D35;
+     36: CCHR := D36; 37: CCHR := D37; 38: CCHR := D38; 39: CCHR := D39;
+     40: CCHR := D40; 41: CCHR := D41; 42: CCHR := D42; 43: CCHR := D43;
+     44: CCHR := D44; 45: CCHR := D45; 46: CCHR := D46; 47: CCHR := D47;
+     48: CCHR := D48; 49: CCHR := D49; 50: CCHR := D50; 51: CCHR := D51;
+     52: CCHR := D52; 53: CCHR := D53; 54: CCHR := D54; 55: CCHR := D55;
+     56: CCHR := D56; 57: CCHR := D57; 58: CCHR := D58; 59: CCHR := D59;
+     60: CCHR := D60; 61: CCHR := D61; 62: CCHR := D62; 63: CCHR := D63
+   END
+END;
+
+FUNCTION CODD(N : INT64) : BOOLEAN;
+BEGIN CODD := ODD(N) END;
+
+PROCEDURE CPACK(VAR A : CWORD; I : INT64; VAR Z : ALFA);
+VAR K, P : INT64;
+BEGIN
+   P := 0;
+   FOR K := 0 TO 9 DO
+      P := P * 64 + ORD(A[I + K]);
+   Z := VAL60(P)
+END;
+
+PROCEDURE CUNPACK(Z : ALFA; VAR A : CWORD; I : INT64);
+VAR K, P : INT64;
+BEGIN
+   P := PAT(Z);
+   FOR K := 9 DOWNTO 0 DO
+   BEGIN
+      A[I + K] := CCHR(P MOD 64);
+      P := P DIV 64
+   END
+END;
+
+{ ---- heap classes ---- }
+PROCEDURE ALLOC(VAR P : CTP; K : IDCLASS); OVERLOAD;
+BEGIN
+   IF CTTOP >= CTSIZE THEN BEGIN WRITELN('CONTEXT TABLE OVERFLOW'); HALT(1) END;
+   P := @CT[CTTOP]; CTTOP := CTTOP + 1; IF CTTOP > CTMAX THEN CTMAX := CTTOP;
+   P^.KLASS := K
+END;
+
+PROCEDURE ALLOC(VAR P : CTP; K : IDCLASS; F : TYPFORM); OVERLOAD;
+BEGIN
+   ALLOC(P, K); P^.FORM := F
+END;
+
+PROCEDURE ALLOC(VAR P : CTP; K : IDCLASS; F : IDKINDS); OVERLOAD;
+BEGIN
+   ALLOC(P, K);
+   IF K = KONST THEN P^.CONKIND := F
+   ELSE IF K = VARS THEN P^.VKIND := F
+   ELSE P^.PROCKIND := F
+END;
+
+PROCEDURE ALLOC(VAR P : PTR); OVERLOAD;
+BEGIN
+   IF LCSTOP >= LCSLIM THEN P := NIL
+   ELSE BEGIN P := @LCS[LCSTOP]; LCSTOP := LCSTOP + 1 END
+END;
+
+PROCEDURE CRESET(P : CTP);
+VAR I : INT64;
+BEGIN
+   FOR I := 0 TO CTSIZE - 1 DO
+      IF @CT[I] = P THEN CTTOP := I
+END;
+
+{ ---- output ---- }
+PROCEDURE PUTASCII(C : CHAR);
+BEGIN
+   IF C = CHR(10) THEN BEGIN WRITELN(OUTPUT); OUTCOL := 0 END
+   ELSE BEGIN WRITE(OUTPUT, C); OUTCOL := OUTCOL + 1 END
+END;
+
+PROCEDURE WRC(C : TCHAR; W : INT64);
+VAR K : INT64;
+BEGIN
+   FOR K := 2 TO W DO PUTASCII(' ');
+   IF C = D00 THEN PUTASCII(CHR(10)) ELSE PUTASCII(TOASCII[ORD(C)])
+END;
+
+PROCEDURE WRPAD(N : INT64);
+VAR K : INT64;
+BEGIN
+   FOR K := 1 TO N DO PUTASCII(' ')
+END;
+
+PROCEDURE WRI(V, W : INT64);
+VAR S : ARRAY [1..24] OF CHAR; N, K : INT64; NEG : BOOLEAN;
+BEGIN
+   NEG := V < 0; IF NEG THEN V := -V;
+   N := 0;
+   REPEAT N := N + 1; S[N] := CHR(ORD('0') + V MOD 10); V := V DIV 10 UNTIL V = 0;
+   IF NEG THEN BEGIN N := N + 1; S[N] := '-' END;
+   WRPAD(W - N);
+   FOR K := N DOWNTO 1 DO PUTASCII(S[K])
+END;
+
+PROCEDURE WRO(V, W : INT64);
+VAR S : ARRAY [1..24] OF CHAR; N, K, D : INT64; P : INT64;
+BEGIN
+   P := PAT(V); N := 0;
+   REPEAT
+      N := N + 1; D := P MOD 8; S[N] := CHR(ORD('0') + D); P := P DIV 8
+   UNTIL (P = 0) AND (N >= W);
+   FOR K := N DOWNTO 1 DO PUTASCII(S[K])
+END;
+
+PROCEDURE WRA(A : ALFA; W : INT64);
+VAR K, L : INT64; P : INT64; C : ARRAY [0..9] OF TCHAR;
+BEGIN
+   P := PAT(A);
+   FOR K := 9 DOWNTO 0 DO BEGIN C[K] := CCHR(P MOD 64); P := P DIV 64 END;
+   IF W = 0 THEN L := 10 ELSE L := W;
+   IF L > 10 THEN WRPAD(L - 10);
+   IF L > 10 THEN L := 10;
+   FOR K := 0 TO L - 1 DO WRC(C[K], 0)
+END;
+
+PROCEDURE CPUT(P : PTCHAR); OVERLOAD;
+BEGIN
+   WRC(P^, 0)
+END;
+
+PROCEDURE PUTOCT(VAR F : TEXT; V : INT64; N : INT64);
+VAR S : ARRAY [1..24] OF CHAR; K : INT64; P : INT64;
+BEGIN
+   P := PAT(V);
+   FOR K := N DOWNTO 1 DO BEGIN S[K] := CHR(ORD('0') + P MOD 8); P := P DIV 8 END;
+   FOR K := 1 TO N DO WRITE(F, S[K])
+END;
+
+PROCEDURE CPUT(P : PINT64); OVERLOAD;
+BEGIN
+   PUTOCT(PASCLGOF, P^, 20); WRITELN(PASCLGOF);
+
+END;
+
+PROCEDURE CPUT(P : PPMDREC); OVERLOAD;
+BEGIN
+   WITH P^ DO
+   BEGIN
+      PUTOCT(PMDF, PNAME, 20); WRITE(PMDF, ' ');
+      IF PKIND = OBJ THEN
+         WRITELN(PMDF, 'OBJ ', ACCESS : 1, ' ', TYP : 1, ' ', RLA : 1)
+      ELSE
+         WRITELN(PMDF, 'PROC ', LINK : 1, ' ', SA : 1, ' ', COUNT : 1)
+   END
+END;
+
+{ ---- input ---- }
+PROCEDURE CGET(P : PTCHAR);
+VAR C : CHAR; B1, B2 : INT64; N : INT64;
+BEGIN
+   IF EOF(INPUT) THEN P^ := D00
+   ELSE IF EOLN(INPUT) THEN BEGIN READLN(INPUT); P^ := D00 END
+   ELSE
+   BEGIN
+      READ(INPUT, C);
+      N := ORD(C);
+      IF (N = 226) OR (N = 194) THEN             { UTF-8 glyph }
+      BEGIN
+         B1 := 0; B2 := 0;
+         IF N = 226 THEN BEGIN READ(INPUT, C); B1 := ORD(C) END;
+         READ(INPUT, C); B2 := ORD(C);
+         IF N = 194 THEN P^ := D62                   { not }
+         ELSE IF (B1 = 136) AND (B2 = 167) THEN P^ := D55   { and }
+         ELSE IF (B1 = 136) AND (B2 = 168) THEN P^ := D54   { or  }
+         ELSE IF (B1 = 137) AND (B2 = 160) THEN P^ := D52   { <> }
+         ELSE IF (B1 = 137) AND (B2 = 164) THEN P^ := D60   { <= }
+         ELSE IF (B1 = 137) AND (B2 = 165) THEN P^ := D61   { >= }
+         ELSE IF (B1 = 137) AND (B2 = 161) THEN P^ := D48   { quote }
+         ELSE IF (B1 = 134) AND (B2 = 145) THEN P^ := D56   { up }
+         ELSE IF (B1 = 134) AND (B2 = 147) THEN P^ := D57   { down }
+         ELSE IF (B1 = 134) AND (B2 = 146) THEN P^ := D53   { right }
+         ELSE P^ := D45
+      END
+      ELSE P^ := CCHR(FROMASCII[N])
+   END
+END;
+
+PROCEDURE INITRT;
+VAR K : INT64;
+BEGIN
+   POW2[0] := 1;
+   FOR K := 1 TO 61 DO POW2[K] := POW2[K - 1] * 2;
+   CTTOP := 0; CTMAX := 0; LCSTOP := 0; LCSLIM := 0;
+   PASCLGOBUF := 0;
+   CINPUT := @INCHBUF; COUTPUT := @OUTCHBUF;
+   PASCLGO := @PASCLGOBUF; PMDFILE := @PMDBUF;
+   ASSIGN(PASCLGOF, 'pasclgo.out'); REWRITE(PASCLGOF);
+   ASSIGN(PMDF, 'pmd.out'); REWRITE(PMDF);
+   OUTCOL := 0;
+   FOR K := 0 TO 255 DO FROMASCII[K] := 45;
+   FOR K := 0 TO 25 DO
+   BEGIN
+      FROMASCII[ORD('A') + K] := K + 1;
+      FROMASCII[ORD('a') + K] := K + 1
+   END;
+   FOR K := 0 TO 9 DO FROMASCII[ORD('0') + K] := 27 + K;
+   FROMASCII[ORD('+')] := 37; FROMASCII[ORD('-')] := 38;
+   FROMASCII[ORD('*')] := 39; FROMASCII[ORD('/')] := 40;
+   FROMASCII[ORD('(')] := 41; FROMASCII[ORD(')')] := 42;
+   FROMASCII[ORD('$')] := 43; FROMASCII[ORD('=')] := 44;
+   FROMASCII[ORD(' ')] := 45; FROMASCII[ORD(',')] := 46;
+   FROMASCII[ORD('.')] := 47; FROMASCII[ORD('[')] := 49;
+   FROMASCII[ORD(']')] := 50; FROMASCII[ORD(':')] := 51;
+   FROMASCII[ORD('<')] := 58; FROMASCII[ORD('>')] := 59;
+   FROMASCII[ORD(';')] := 63; FROMASCII[ORD('''')] := 48;
+   FROMASCII[ORD('^')] := 56;
+   FOR K := 0 TO 63 DO TOASCII[K] := '?';
+   FOR K := 0 TO 25 DO TOASCII[K + 1] := CHR(ORD('A') + K);
+   FOR K := 0 TO 9 DO TOASCII[27 + K] := CHR(ORD('0') + K);
+   TOASCII[0] := '~';
+   TOASCII[37] := '+'; TOASCII[38] := '-'; TOASCII[39] := '*'; TOASCII[40] := '/';
+   TOASCII[41] := '('; TOASCII[42] := ')'; TOASCII[43] := '$'; TOASCII[44] := '=';
+   TOASCII[45] := ' '; TOASCII[46] := ','; TOASCII[47] := '.'; TOASCII[48] := '''';
+   TOASCII[49] := '['; TOASCII[50] := ']'; TOASCII[51] := ':'; TOASCII[52] := '#';
+   TOASCII[53] := '@'; TOASCII[54] := '|'; TOASCII[55] := '&'; TOASCII[56] := '^';
+   TOASCII[57] := '!'; TOASCII[58] := '<'; TOASCII[59] := '>'; TOASCII[60] := '{';
+   TOASCII[61] := '}'; TOASCII[62] := '~'; TOASCII[63] := ';';
+   PARMLIST.ICO := 64;
+   IF PARAMCOUNT >= 1 THEN BEGIN VAL(PARAMSTR(1), K); PARMLIST.ICO := K END
+END;
+
+PROCEDURE FINIRT;
+VAR PF : TEXT;
+BEGIN
+   ASSIGN(PF, 'parmlist.out'); REWRITE(PF);
+   WITH PARMLIST DO
+   BEGIN
+      WRITELN(PF, 'ICO ', ICO : 1);
+      WRITELN(PF, 'LPJMPTAB ', LPJMPTAB : 1);
+      WRITELN(PF, 'LOADPT ', LOADPT : 1);
+      WRITELN(PF, 'LIMCODE ', LIMCODE : 1);
+      WRITELN(PF, 'ENTRYPT ', ENTRYPT : 1);
+      IF ERRFLAG THEN WRITELN(PF, 'ERRFLAG 1') ELSE WRITELN(PF, 'ERRFLAG 0')
+   END;
+   CLOSE(PF);
+   CLOSE(PASCLGOF); CLOSE(PMDF); WRITELN; WRITELN('CTMAX=', CTMAX : 1)
+END;
