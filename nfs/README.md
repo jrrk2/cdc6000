@@ -49,3 +49,14 @@ core: `dir`, `more`/`cat`, `cd`, `pwd`, `copy`, `ren`, `del`, `mkdir`, `rmdir`, 
   characters only.  The UART registers are `REG[5]` (send a byte) and `REG[8]` (256 + byte, or 0 if none; a 64 byte FIFO).
 * Testing: `host/cdcemu`, the Verilated core and `fpga/vc707-eth/sim/run.sh` take `-u file` for the keystrokes; a typed
   byte is only offered after the program has asked a few hundred times in the C models, as a person types slowly.
+
+
+## DHCP
+
+At start-up (and for the shell's `net` command) the driver asks for an address (DISCOVER, OFFER, REQUEST, ACK; host name
+`cdc6000`) and waits three seconds for each answer, five times; if nobody answers it keeps the static address of the VALUE
+section of `nfslib.pas` (192.168.1.77).  **DIP switch 7 up** skips DHCP and uses the static address.  The server is not taken from
+DHCP: its host number is the value of **DIP switches 0-6** (0: the default of the VALUE section, 109) on the network of the
+address the board was given (the first three bytes of it).  `info` in the shell says which it is.  The lease is not renewed (a run
+is short).  The model (`netmodel.h`) answers DHCP with 192.168.1.178; `-D n` gives the DIP switches and `-N` (before
+another option) takes the DHCP server away, in `host/cdcemu`, the Verilated core and the board-level simulation.

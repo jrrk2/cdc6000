@@ -33,6 +33,7 @@ static int nm_rxlen, nm_rxvalid;
 static struct { int len; uint8_t b[1536]; } nm_q[16];
 static int nm_qh, nm_qn;
 static long nm_ms;
+static int nm_dip, nm_nodhcp;            /* the DIP switches (-D n); -N: no DHCP server on the network */
 static long nm_frames_tx, nm_frames_rx;
 
 static char nm_names[256][512];
@@ -299,6 +300,33 @@ static void nm_frame(const uint8_t *f, int len)
         nm_enqueue(r, 42);
         return;
     }
+    if (f[12] == 0x08 && f[13] == 0x00 && f[23] == 17 && f[36] == 0 && f[37] == 67 && len >= 282) {      /* DHCP */
+        static const uint8_t offer[4] = {192, 168, 1, 178};            /* what the model hands out: not the static address */
+        uint8_t r[400]; int mt = 0, c = 282, n, ipl; uint16_t cs;
+        while (c + 1 < len && f[c] != 255) { if (f[c] == 0) { c++; continue; } if (f[c] == 53) mt = f[c + 2]; c += 2 + f[c + 1]; }
+        if ((mt != 1 && mt != 3) || nm_nodhcp) return;
+        memset(r, 0, sizeof r);
+        memcpy(r, f + 70, 6); memcpy(r + 6, nm_srv_mac, 6); r[12] = 8; r[13] = 0;
+        r[14] = 0x45; r[22] = 64; r[23] = 17; memcpy(r + 26, nm_srv_ip, 4); memset(r + 30, 255, 4);
+        r[34] = 0; r[35] = 67; r[36] = 0; r[37] = 68;
+        r[42] = 2; r[43] = 1; r[44] = 6; memcpy(r + 46, f + 46, 4); memcpy(r + 52, f + 52, 2);
+        memcpy(r + 58, offer, 4); memcpy(r + 62, nm_srv_ip, 4); memcpy(r + 70, f + 70, 6);
+        r[278] = 99; r[279] = 130; r[280] = 83; r[281] = 99;
+        n = 282;
+        r[n++] = 53; r[n++] = 1; r[n++] = mt == 1 ? 2 : 5;
+        r[n++] = 54; r[n++] = 4; memcpy(r + n, nm_srv_ip, 4); n += 4;
+        r[n++] = 51; r[n++] = 4; nm_w32(r + n, 86400); n += 4;
+        r[n++] = 1; r[n++] = 4; r[n++] = 255; r[n++] = 255; r[n++] = 255; r[n++] = 0;
+        r[n++] = 3; r[n++] = 4; memcpy(r + n, nm_srv_ip, 4); n += 4;
+        r[n++] = 255;
+        if (n < 300) n = 300;
+        ipl = n - 14;
+        r[16] = ipl >> 8; r[17] = ipl & 255;
+        cs = nm_csum(r + 14, 20); r[24] = cs >> 8; r[25] = cs & 255;
+        r[38] = (n - 34) >> 8; r[39] = (n - 34) & 255;
+        nm_enqueue(r, n);
+        return;
+    }
     if (f[12] == 0x08 && f[13] == 0x00 && f[14] == 0x45 && f[23] == 17 && !memcmp(f + 30, nm_srv_ip, 4)) {
         int ipl = f[16] << 8 | f[17], dport = f[36] << 8 | f[37], sport = f[34] << 8 | f[35];
         uint8_t rep[1536]; uint8_t *x = rep + 42; int n;
@@ -367,6 +395,7 @@ static uint64_t net_read(unsigned off)
     case 0x1002: return nm_rxlen;
     case 0x1006: return nm_ms & 0x3fffffff;
     case 0x1008: return nm_uart_get();               /* UART receive: 256 + byte, 0 if none */
+    case 0x1009: return nm_dip;
     case 0x100a: nm_cyc += 211; return nm_cyc & 0xffffffffULL;   /* clock cycle count */
     }
     return 0;

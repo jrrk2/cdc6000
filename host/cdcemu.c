@@ -381,6 +381,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-t")) { tracei = atoi(argv[a + 1]); }
         else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
         else if (!strcmp(argv[a], "-u")) nm_uart_in = fopen(argv[a + 1], "rb");
+        else if (!strcmp(argv[a], "-D")) nm_dip = atoi(argv[a + 1]);
+        else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
         else if (!strcmp(argv[a], "-m")) dumpf = argv[a + 1];
         else if (!strcmp(argv[a], "-x")) xd = strtoul(argv[a + 1], 0, 8);
         else if (!strcmp(argv[a], "-xn")) xn = atoi(argv[a + 1]);

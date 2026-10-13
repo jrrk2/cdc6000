@@ -20,11 +20,13 @@ int main(int argc, char **argv)
             FILE *f = fopen(argv[a + 1], "rb"); int c; useu = true;
             while (f && (c = fgetc(f)) != EOF) uin.push_back(c);
             if (f) fclose(f);
-        } else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
+        } else if (!strcmp(argv[a], "-D")) { nm_dip = atoi(argv[a + 1]); }
+        else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
+        else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
         else if (!strcmp(argv[a], "-n")) maxcyc = atoll(argv[a + 1]);
     }
     auto *top = new Vcdc_eth_core(ctx);
-    top->UART_RX = 1; top->DIP = 0; top->BTN = 0; top->pcspma_status = 0x0303;
+    top->UART_RX = 1; top->DIP = nm_dip; top->BTN = 0; top->pcspma_status = 0x0303;
     top->rx_axis_tvalid = 0; top->rx_axis_tlast = 0; top->rx_axis_tuser = 0; top->tx_axis_tready = 1;
     top->resetn = 0; top->eth_rst = 1;
     auto tick = [&]() {

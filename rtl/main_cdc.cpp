@@ -51,6 +51,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-m")) dumpf = argv[a + 1];
         else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
         else if (!strcmp(argv[a], "-u")) nm_uart_in = fopen(argv[a + 1], "rb");
+        else if (!strcmp(argv[a], "-D")) nm_dip = atoi(argv[a + 1]);
+        else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
     }
     top = new Vcdc6000_core(ctx);
     top->reset = 1; top->load_we = 0; top->rx_valid = 0; top->tx_ready = 1; top->fo_ready = 1;
