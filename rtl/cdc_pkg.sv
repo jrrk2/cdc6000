@@ -215,6 +215,155 @@ package cdc_pkg;
     dmul = dmul_from(a, b, p);
   endfunction
 
+  // ---- the same floating add and normalise cut into stages for a pipelined unit (cdc6000_sb): each stage is short enough for a
+  // clock of 100 MHz and more.  fn_s3(fn_s2(fn_s1(fa_s2(fa_s1(a, b, sub))), round)) = fnorm(add_prep(a, b, sub), round).
+  typedef struct packed {
+    logic [1:0]        kind;          // 0: add the two, 1: the result is c0 alone, 2: the result is zero
+    logic              neg0;
+    logic [47:0]       c0;
+    logic signed [15:0] e0;
+    logic              xn, yn;
+    logic [47:0]       xc, yc;
+    logic [6:0]        d;
+    logic signed [15:0] ye;
+  } fa1_t;
+
+  function automatic fa1_t fa_s1(input logic [59:0] a, input logic [59:0] b, input logic sub);
+    fa1_t r;
+    fl_t x, y, t;
+    int d;
+    x = funpack(a); y = funpack(b);
+    if (sub) y.neg = !y.neg;
+    r = '0;
+    if (x.c == 0) begin
+      if (y.c == 0) r.kind = 2'd2;
+      else begin r.kind = 2'd1; r.neg0 = y.neg; r.c0 = y.c; r.e0 = y.e; end
+    end else if (y.c == 0) begin
+      r.kind = 2'd1; r.neg0 = x.neg; r.c0 = x.c; r.e0 = x.e;
+    end else begin
+      if (x.e < y.e) begin t = x; x = y; y = t; end
+      d = int'(x.e) - int'(y.e);
+      if (d > 60) begin r.kind = 2'd1; r.neg0 = x.neg; r.c0 = x.c; r.e0 = x.e; end
+      else begin r.kind = 2'd0; r.xn = x.neg; r.xc = x.c; r.yn = y.neg; r.yc = y.c; r.d = 7'(d); r.ye = y.e; end
+    end
+    fa_s1 = r;
+  endfunction
+
+  function automatic nrm_t fa_s2(input fa1_t s);
+    nrm_t r;
+    logic [NW-1:0] sx, sy;
+    r.zero = 1'b0; r.neg = 1'b0; r.m = '0; r.e = 16'sd0;
+    if (s.kind == 2'd2) r.zero = 1'b1;
+    else if (s.kind == 2'd1) begin r.neg = s.neg0; r.m = NW'(s.c0); r.e = s.e0; end
+    else begin
+      sx = NW'(s.xc) << s.d; sy = NW'(s.yc);
+      r.e = s.ye;
+      if (s.xn == s.yn) begin r.m = sx + sy; r.neg = s.xn; end
+      else if (sx >= sy) begin r.m = sx - sy; r.neg = s.xn; end
+      else begin r.m = sy - sx; r.neg = s.yn; end
+      if (r.m == 0) begin r.zero = 1'b1; r.neg = 1'b0; end
+    end
+    fa_s2 = r;
+  endfunction
+
+  typedef struct packed {
+    logic              zero, neg, round;
+    logic [NW-1:0]     m;
+    logic signed [15:0] e;
+    logic [6:0]        p;             // the position of the top bit
+  } fn1_t;
+  typedef struct packed {
+    logic              zero, neg;
+    logic [47:0]       c;
+    logic signed [15:0] e;
+  } fn2_t;
+
+  function automatic fn1_t fn_s1(input nrm_t n, input logic round);
+    fn1_t r;
+    r.zero = n.zero || (n.m == '0); r.neg = n.neg; r.round = round; r.m = n.m; r.e = n.e; r.p = 7'(msbn(n.m));
+    fn_s1 = r;
+  endfunction
+
+  function automatic fn2_t fn_s2(input fn1_t s);
+    fn2_t r;
+    logic [NW-1:0] m;
+    int e, sh;
+    m = s.m; e = int'(s.e); sh = int'(s.p) - 47;
+    if (sh > 0) begin
+      if (s.round) m = m + (112'd1 << (sh - 1));
+      m = m >> sh;
+      e = e + sh;
+      if (m[48]) begin m = m >> 1; e = e + 1; end
+    end else if (sh < 0) begin
+      m = m << (-sh);
+      e = e + sh;
+    end
+    r.zero = s.zero; r.neg = s.neg; r.c = m[47:0]; r.e = 16'(e);
+    fn_s2 = r;
+  endfunction
+
+  function automatic logic [59:0] fn_s3(input fn2_t s);
+    int e;
+    e = int'(s.e);
+    if (s.zero) fn_s3 = 60'd0;
+    else if (e + 1024 <= 0) fn_s3 = 60'd0;
+    else if (e + 1024 >= 'h7ff) fn_s3 = s.neg ? ~{12'h7ff, 48'd0} : {12'h7ff, 48'd0};
+    else fn_s3 = fpack(s.neg, 16'(e), s.c);
+  endfunction
+
+  // ---- 60 bit ones-complement add in two stages: both sums, then the choice and the correction of an all-ones result
+  typedef struct packed { logic c0, bothones; logic [59:0] s0, s1; } add1_t;
+  function automatic add1_t add_s1(input logic [59:0] a, input logic [59:0] b);
+    add1_t r;
+    logic [60:0] t;
+    t = {1'b0, a} + {1'b0, b};
+    r.c0 = t[60]; r.s0 = t[59:0]; r.s1 = a + b + 60'd1; r.bothones = (a == M60) && (b == M60);
+    add_s1 = r;
+  endfunction
+  function automatic logic [59:0] add_s2(input add1_t t);
+    logic [59:0] r;
+    r = t.c0 ? t.s1 : t.s0;
+    if (r == M60 && !t.bothones) r = 60'd0;
+    add_s2 = r;
+  endfunction
+
+  // population count as a tree (a serial sum is a hundred logic levels)
+  function automatic logic [23:0] pop_s1(input logic [59:0] x);     // six counts of ten bits
+    logic [23:0] r;
+    for (int g = 0; g < 6; g++) begin
+      logic [3:0] c;
+      c = 4'd0;
+      for (int i = 0; i < 10; i++) c = c + {3'd0, x[10*g + i]};
+      r[4*g +: 4] = c;
+    end
+    pop_s1 = r;
+  endfunction
+  function automatic logic [59:0] pop_s2(input logic [23:0] r);
+    logic [6:0] c;
+    c = 7'd0;
+    for (int g = 0; g < 6; g++) c = c + {3'd0, r[4*g +: 4]};
+    pop_s2 = {53'd0, c};
+  endfunction
+
+  // normalise (NX, ZX) in two stages: the count of leading zeros, then the shift
+  typedef struct packed { logic zero, neg; logic [47:0] c; logic signed [15:0] e; logic [5:0] n; } nx1_t;
+  function automatic nx1_t nx_s1(input logic [59:0] w);
+    nx1_t r;
+    fl_t f;
+    f = funpack(w);
+    r.zero = (f.c == 0); r.neg = f.neg; r.c = f.c; r.e = f.e; r.n = 6'(clz48(f.c));
+    nx_s1 = r;
+  endfunction
+  function automatic logic [59:0] nx_s2(input nx1_t r);
+    logic [47:0] c;
+    logic signed [15:0] e;
+    if (r.zero) nx_s2 = 60'd0;
+    else begin
+      c = r.c << r.n; e = r.e - 16'(r.n);
+      nx_s2 = fpack(r.neg, e, c);
+    end
+  endfunction
+
   // number of leading zeros of a 48 bit coefficient
   function automatic int clz48(input logic [47:0] c);
     int n;

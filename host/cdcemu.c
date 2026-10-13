@@ -351,7 +351,7 @@ static void run(void)
             if (tracef) {       /* f, i j k (9 bits), flags: 1 long, 2 taken, 4 word-aligned first parcel (slot 0) */
                 unsigned char rec[4];
                 rec[0] = (unsigned char)f; rec[1] = (unsigned char)((i << 6 | j << 3 | k) >> 8); rec[2] = (unsigned char)((i << 6 | j << 3 | k) & 255);
-                rec[3] = (unsigned char)((longi ? 1 : 0) | (jump ? 2 : 0) | (slot == 0 ? 4 : 0));
+                rec[3] = (unsigned char)((longi ? 1 : 0) | (jump ? 2 : 0) | (slot == 0 ? 4 : 0) | ((f >= 1 && f <= 7 && K <= P) ? 8 : 0));    /* 8: the target is not forward */
                 fwrite(rec, 1, 4, tracef);
             }
             if (jump && ninstr >= jlo && ninstr <= jhi) fprintf(stderr, "%lld: %o/%d -> %o  X7=%o X6=%llo\n", ninstr, P, slot, target, (unsigned)X[7], (unsigned long long)X[6]);

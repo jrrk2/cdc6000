@@ -27,12 +27,9 @@ module cdc6000_sb #(
     parameter bit EXT_MEM = 1'b0,
     parameter int NSK = 8,            // words in the instruction stack
     parameter int NINC = 2,           // address increment units
-    parameter int LAT_BOOL = 1,       // result latency of each kind of unit: cycles from the start of execution to the result on the bus
-    parameter int LAT_SHIFT = 1,
-    parameter int LAT_LADD = 1,
-    parameter int LAT_FADD = 1,
-    parameter int LAT_MUL = 1,
-    parameter int LAT_INC = 1,
+    parameter int LAT_BOOL = 1,       // result latency: cycles from the start of execution to the result on the bus (the units that are
+    parameter int LAT_SHIFT = 2,      // cut into stages have a fixed one: long add 2, floating add 5, multiply 7, divide 3 after the
+    parameter int LAT_INC = 1,        // last quotient bit, normalise/pack/count 3)
     parameter int MEMLAT = 1,         // 1: the word read is on the bus the cycle after the request; 2: one register more
     parameter int HALT_WAIT = 80,     // cycles that older instructions get to finish after the store that halts
     parameter bit AGEN = 1'b1,        // work out the address of a load or store at issue when the operands are there
@@ -86,15 +83,15 @@ module cdc6000_sb #(
 );
   import cdc_pkg::*;
 
-  localparam int U_BR = 0, U_BOOL = 1, U_SHIFT = 2, U_LADD = 3, U_FADD = 4, U_MUL = 5, U_DIV = 6, U_INC0 = 7;
-  localparam int NU = 7 + NINC;                       // units that have an entry
+  localparam int U_BR = 0, U_BOOL = 1, U_SHIFT = 2, U_LADD = 3, U_FADD = 4, U_MUL = 5, U_DIV = 6, U_NORM = 7, U_INC0 = 8;
+  localparam int NU = 8 + NINC;                       // units that have an entry
   localparam int NB = 2 * (NU + 1);                   // result buses: two for each unit and two for the memory
   localparam int Q = 4;                               // memory queue
   localparam logic [17:0] DEV_BASE = 18'o120000;
 
   // unit kinds of an instruction
   localparam logic [3:0] UK_BR = 4'd0, UK_BOOL = 4'd1, UK_SHIFT = 4'd2, UK_LADD = 4'd3, UK_FADD = 4'd4, UK_MUL = 4'd5,
-                         UK_DIV = 4'd6, UK_INC = 4'd7, UK_NONE = 4'd8;
+                         UK_DIV = 4'd6, UK_INC = 4'd7, UK_NONE = 4'd8, UK_NORM = 4'd9;
 
   // registers by number: X0-7 are 0-7, A0-7 are 8-15, B0-7 are 16-23
   function automatic logic [4:0] rx_(input logic [2:0] n); rx_ = {2'b00, n}; endfunction
@@ -104,9 +101,11 @@ module cdc6000_sb #(
   function automatic int lat_of(input int u);
     if (u == U_BOOL) lat_of = LAT_BOOL;
     else if (u == U_SHIFT) lat_of = LAT_SHIFT;
-    else if (u == U_LADD) lat_of = LAT_LADD;
-    else if (u == U_FADD) lat_of = LAT_FADD;
-    else if (u == U_MUL) lat_of = LAT_MUL;
+    else if (u == U_LADD) lat_of = 2;
+    else if (u == U_FADD) lat_of = 5;
+    else if (u == U_MUL) lat_of = 7;
+    else if (u == U_DIV) lat_of = 3;
+    else if (u == U_NORM) lat_of = 3;
     else if (u >= U_INC0) lat_of = LAT_INC;
     else lat_of = 1;
   endfunction
@@ -201,15 +200,15 @@ module cdc6000_sb #(
         d.s1v = 1; d.s1r = rx_(k);
       end
       6'o24, 6'o25, 6'o26: begin
-        d.uk = UK_SHIFT; d.d0v = 1; d.d0r = rx_(i); d.s0v = 1; d.s0r = rx_(k);
+        d.uk = UK_NORM; d.d0v = 1; d.d0r = rx_(i); d.s0v = 1; d.s0r = rx_(k);
         if (j != 0) begin d.d1v = 1; d.d1r = rb_(j); end
       end
       6'o27: begin
-        d.uk = UK_SHIFT; d.d0v = 1; d.d0r = rx_(i);
+        d.uk = UK_NORM; d.d0v = 1; d.d0r = rx_(i);
         if (j != 0) begin d.s0v = 1; d.s0r = rb_(j); end
         d.s1v = 1; d.s1r = rx_(k);
       end
-      6'o47: begin d.uk = UK_SHIFT; d.d0v = 1; d.d0r = rx_(i); d.s0v = 1; d.s0r = rx_(k); end
+      6'o47: begin d.uk = UK_NORM; d.d0v = 1; d.d0r = rx_(i); d.s0v = 1; d.s0r = rx_(k); end
       6'o30, 6'o31, 6'o32, 6'o33, 6'o34, 6'o35: begin
         d.uk = UK_FADD; d.d0v = 1; d.d0r = rx_(i); d.s0v = 1; d.s0r = rx_(j); d.s1v = 1; d.s1r = rx_(k);
       end
@@ -257,7 +256,7 @@ module cdc6000_sb #(
   endfunction
 
   function automatic logic is_dev(input logic [17:0] ad);
-    is_dev = (ad >= DEV_BASE) && (ad < DEV_BASE + 18'd4112);
+    is_dev = (ad[17:12] == 6'o12) || (ad[17:12] == 6'o13 && ad[11:4] == 8'd0);       // 120000B .. 130017B, without a comparator
   endfunction
 
   function automatic logic is_io(input logic [17:0] ad);
@@ -496,6 +495,7 @@ module cdc6000_sb #(
       UK_FADD: begin unit_ok = accept[U_FADD]; sel_u = U_FADD; end
       UK_MUL: begin unit_ok = accept[U_MUL]; sel_u = U_MUL; end
       UK_DIV: begin unit_ok = accept[U_DIV]; sel_u = U_DIV; end
+      UK_NORM: begin unit_ok = accept[U_NORM]; sel_u = U_NORM; end
       UK_INC: begin
         for (int n = NINC - 1; n >= 0; n--) if (accept[U_INC0 + n]) begin unit_ok = 1'b1; sel_u = U_INC0 + n; end
       end
@@ -510,15 +510,17 @@ module cdc6000_sb #(
 
   // early resolution: a conditional branch (or JP B) whose operands are not reserved is decided at issue; otherwise the branch unit waits for them
   logic        br_early, br_e_tk;
+  logic [59:0] ebr0, ebr1;                              // the operands of the branch, read from the registers
   logic [17:0] br_e_tgt;
   logic signed [18:0] ebva, ebvb;
   always_comb begin
     br_early = (D.uk == UK_BR) && !(D.s0v && rsv_v[D.s0r]) && !(D.s1v && rsv_v[D.s1r]);
-    ebva = sb18(o_v[0][17:0]); ebvb = sb18(o_v[1][17:0]);
+    ebr0 = D.s0v ? regval(D.s0r) : 60'd0; ebr1 = D.s1v ? regval(D.s1r) : 60'd0;
+    ebva = sb18(ebr0[17:0]); ebvb = sb18(ebr1[17:0]);
     br_e_tk = 1'b0; br_e_tgt = dr_K;
     case (dr_f)
-      6'o02: begin br_e_tk = 1'b1; br_e_tgt = dr_K + o_v[0][17:0]; end
-      6'o03: br_e_tk = cond(dr_i, o_v[0]);
+      6'o02: begin br_e_tk = 1'b1; br_e_tgt = dr_K + ebr0[17:0]; end
+      6'o03: br_e_tk = cond(dr_i, ebr0);
       6'o04: br_e_tk = (ebva == ebvb);
       6'o05: br_e_tk = (ebva != ebvb);
       6'o06: br_e_tk = (ebva >= ebvb);
@@ -546,21 +548,6 @@ module cdc6000_sb #(
   logic [17:0] c_d1[0:NU-1];
   logic        c_p1[0:NU-1];
   logic        c_v[0:NU-1];
-
-  // floating point: shared decode of the operands per unit
-  fl_t         fa_x, fa_y, fm_x, fm_y;
-  logic [95:0] fm_p;
-  nrm_t        fa_n, fm_n;
-  logic [59:0] fa_res, fm_res, fm_dres;
-  always_comb begin
-    fa_n = add_prep(e_s0[U_FADD], e_s1[U_FADD], e_f[U_FADD][0]);
-    fa_res = fnorm(fa_n, e_f[U_FADD][2]);
-    fm_x = funpack(e_s0[U_MUL]); fm_y = funpack(e_s1[U_MUL]);
-    fm_p = {48'd0, fm_x.c} * {48'd0, fm_y.c};
-    fm_n = mul_prep(e_s0[U_MUL], e_s1[U_MUL], fm_p);
-    fm_res = fnorm(fm_n, e_f[U_MUL][0]);
-    fm_dres = dmul_from(e_s0[U_MUL], e_s1[U_MUL], fm_p);
-  end
 
   // divide: restoring, one quotient bit a cycle
   fl_t         dv_x, dv_y;
@@ -664,18 +651,10 @@ module cdc6000_sb #(
           6'o20: c_d0[u] = rotl60(e_s0[u], {fj_, fk_});
           6'o21: c_d0[u] = sar60(e_s0[u], {fj_, fk_});
           6'o22: c_d0[u] = shl_ ? rotl60(e_s1[u], shn_) : sar60(e_s1[u], shn_);
-          6'o23: c_d0[u] = shl_ ? sar60(e_s1[u], shn_) : rotl60(e_s1[u], shn_);
-          6'o24, 6'o25: begin c_d0[u] = nx_result(e_s0[u]); c_d1[u] = nx_count(e_s0[u]); c_p1[u] = (fj_ != 0); end
-          6'o26: begin c_d0[u] = ux_coef(e_s0[u]); c_d1[u] = ux_exp(e_s0[u]); c_p1[u] = (fj_ != 0); end
-          6'o27: c_d0[u] = px_result(e_s1[u], bj18);
-          default: c_d0[u] = popcount60(e_s0[u]);
+          default: c_d0[u] = shl_ ? sar60(e_s1[u], shn_) : rotl60(e_s1[u], shn_);
         endcase
-      end else if (u == U_LADD) begin
-        c_d0[u] = (f_ == 6'o36) ? add60(e_s0[u], e_s1[u]) : add60(e_s0[u], ~e_s1[u]);
-      end else if (u == U_FADD) begin
-        c_d0[u] = fa_res;
-      end else if (u == U_MUL) begin
-        c_d0[u] = (f_ == 6'o42) ? fm_dres : fm_res;
+      end else if (u == U_NORM) begin
+        c_p1[u] = (f_ <= 6'o26) && (fj_ != 0);           // NX, ZX and UX also give a B register
       end else if (u >= U_INC0) begin
         if (f_[5:3] == 3'd7) c_d0[u] = sx18(inc_s[u]); else c_d0[u] = {42'd0, inc_s[u]};
       end
@@ -693,12 +672,16 @@ module cdc6000_sb #(
     accept[U_DIV] = !e_v[U_DIV];
   end
 
-  // result of the divider when it is done
-  logic [59:0] dv_out;
-  always_comb begin
-    dv_fin = dv_run && (dv_cnt == 6'd51);
-    dv_out = dv_run ? fnorm(dv_n, dv_round) : dv_special_d;
-  end
+  always_comb dv_fin = dv_run && (dv_cnt == 6'd51);
+
+  // ------------------------------------------------------------------ the data paths of the units that are cut into stages
+  logic [59:0] s_ladd, s_fadd, s_fmul, s_dv, s_norm0;
+  logic [17:0] s_norm1;
+  sb_ladd  ladd  (.clk(clk), .a(e_s0[U_LADD]), .b(e_s1[U_LADD]), .sub(e_f[U_LADD][0]), .r(s_ladd));
+  sb_fadd  fadd  (.clk(clk), .a(e_s0[U_FADD]), .b(e_s1[U_FADD]), .f(e_f[U_FADD]), .r(s_fadd));
+  sb_fmul  fmul  (.clk(clk), .a(e_s0[U_MUL]), .b(e_s1[U_MUL]), .f(e_f[U_MUL]), .r(s_fmul));
+  sb_dvout dvout (.clk(clk), .run(dv_run), .n(dv_n), .round(dv_round), .sp_d(dv_special_d), .r(s_dv));
+  sb_norm  norm  (.clk(clk), .w0(e_s0[U_NORM]), .w1(e_s1[U_NORM]), .f(e_f[U_NORM]), .r0(s_norm0), .r1(s_norm1));
 
   // ------------------------------------------------------------------ delay lines
   logic        u_o_v[0:NU-1];
@@ -713,14 +696,18 @@ module cdc6000_sb #(
   generate
     for (genvar g = 0; g < NU; g++) begin : g_unit
       logic in_v;
-      logic [59:0] in_d0;
+      logic [59:0] p_d0;
+      logic [17:0] p_d1;
       assign in_v = launch[g] && (e_d0v[g] || e_d1v[g]) && (g != U_BR);
-      assign in_d0 = (g == U_DIV) ? dv_out : c_d0[g];
       sb_pipe #(.LAT(lat_of(g))) pipe (
         .clk(clk), .reset(reset),
-        .in_v(in_v), .in_t(e_tag[g]), .in_d0(in_d0), .in_d1(c_d1[g]), .in_p1(c_p1[g]), .in_mf(e_mf[g]), .in_mq(e_mq[g]),
-        .out_v(u_o_v[g]), .out_t(u_o_t[g]), .out_d0(u_o_d0[g]), .out_d1(u_o_d1[g]), .out_p1(u_o_p1[g]),
+        .in_v(in_v), .in_t(e_tag[g]), .in_d0(c_d0[g]), .in_d1(c_d1[g]), .in_p1(c_p1[g]), .in_mf(e_mf[g]), .in_mq(e_mq[g]),
+        .out_v(u_o_v[g]), .out_t(u_o_t[g]), .out_d0(p_d0), .out_d1(p_d1), .out_p1(u_o_p1[g]),
         .out_mf(u_o_mf[g]), .out_mq(u_o_mq[g]), .busy(u_o_busy[g]));
+      // the units cut into stages bring their result from their own registers, with the same delay as the tag
+      assign u_o_d0[g] = (g == U_LADD) ? s_ladd : (g == U_FADD) ? s_fadd : (g == U_MUL) ? s_fmul : (g == U_DIV) ? s_dv :
+                         (g == U_NORM) ? s_norm0 : p_d0;
+      assign u_o_d1[g] = (g == U_NORM) ? s_norm1 : p_d1;
     end
   endgenerate
 
@@ -731,7 +718,10 @@ module cdc6000_sb #(
   logic        mb_v;                                   // the memory's bus, port 1
   logic [4:0]  mb_t;
   logic [59:0] mb_d;
-  logic        io_res_v;                               // a result of a device or character load, on the bus this cycle
+  logic        iores_v;                                // the result of a device or character load, on the bus the cycle after it came
+  logic [4:0]  iores_t;
+  logic [59:0] iores_d;
+  logic        io_res_v;                               // (the cycle it came)
   logic [4:0]  io_res_t;
   logic [59:0] io_res_d;
 
@@ -752,7 +742,7 @@ module cdc6000_sb #(
     end else begin
       if (ld_v2) begin mb_v = 1'b1; mb_t = ld_t2; mb_d = ld_d2; end
     end
-    if (io_res_v) begin mb_v = 1'b1; mb_t = io_res_t; mb_d = io_res_d; end
+    if (iores_v) begin mb_v = 1'b1; mb_t = iores_t; mb_d = iores_d; end
     rb_v[2*NU+1] = mb_v; rb_t[2*NU+1] = mb_t; rb_d[2*NU+1] = mb_d;
   end
 
@@ -840,7 +830,7 @@ module cdc6000_sb #(
 
   // ------------------------------------------------------------------ drained
   always_comb begin
-    drained = (e_v == '0) && (u_o_busy == '0) && (mq_n == 3'd0) && !ld_v && !ld_v2 && !br_pend && !dv_run;
+    drained = (e_v == '0) && (u_o_busy == '0) && (mq_n == 3'd0) && !ld_v && !ld_v2 && !iores_v && !br_pend && !dv_run;
   end
 
   // ------------------------------------------------------------------ the clocked part
@@ -854,7 +844,7 @@ module cdc6000_sb #(
       dp_w <= 18'd0; dp_s <= 2'd0; dp_nskip <= 5'd0; f_v <= 1'b0; f_drop <= 1'b0; f_a <= '0;
       dr_v <= 1'b0; br_pend <= 1'b0; halt_req <= 1'b0; halt_cnt <= 7'd0;
       ld_v <= 1'b0; ld_v2 <= 1'b0; ld_t <= 5'd0; ld_t2 <= 5'd0; ld_d2 <= 60'd0;
-      io_file <= 60'd0; dv_run <= 1'b0; dv_cnt <= 6'd0; dev_cool <= 1'b0;
+      io_file <= 60'd0; dv_run <= 1'b0; dv_cnt <= 6'd0; dev_cool <= 1'b0; iores_v <= 1'b0;
       rx_take <= 1'b0; tx_valid <= 1'b0; tx_char <= 6'd0; fo_valid <= 1'b0; fo_word <= 60'd0; fo_name <= 60'd0;
     end else begin
       // ---- boot block: entry point, B5 = B6, B4
@@ -1002,6 +992,7 @@ module cdc6000_sb #(
       rx_take <= rx_take_c; tx_valid <= tx_valid_c; tx_char <= tx_char_c;
       fo_valid <= fo_valid_c; fo_word <= fo_word_c; fo_name <= io_file;
       dev_cool <= dev_req && dev_ack;
+      iores_v <= io_res_v; iores_t <= io_res_t; iores_d <= io_res_d;
       // ---- the stop
       if (halt_set) halt_req <= 1'b1;
       if (halt_req) begin
@@ -1100,4 +1091,109 @@ module sb_pipe #(parameter int LAT = 1) (
       end
     end
   endgenerate
+endmodule
+
+
+// ---- the data paths of the units that are cut into stages: each has the latency written next to it (the tag goes through sb_pipe
+// with the same one).  The functions are in cdc_pkg.sv and are checked against the one-cycle ones by tests/fpstage_tb.sv.
+
+// long add: both sums, then the choice and the correction of an all-ones result.  Latency 2
+module sb_ladd (input logic clk, input logic [59:0] a, input logic [59:0] b, input logic sub, output logic [59:0] r);
+  import cdc_pkg::*;
+  add1_t t1;
+  always_ff @(posedge clk) t1 <= add_s1(a, sub ? ~b : b);
+  assign r = add_s2(t1);
+endmodule
+
+// floating add: unpack and order, align and add, find the top bit, round and shift, pack.  Latency 5
+module sb_fadd (input logic clk, input logic [59:0] a, input logic [59:0] b, input logic [5:0] f, output logic [59:0] r);
+  import cdc_pkg::*;
+  fa1_t s1; nrm_t s2; fn1_t s3; fn2_t s4;
+  logic r1, r2;
+  always_ff @(posedge clk) begin
+    s1 <= fa_s1(a, b, f[0]); r1 <= f[2];
+    s2 <= fa_s2(s1);         r2 <= r1;
+    s3 <= fn_s1(s2, r2);
+    s4 <= fn_s2(s3);
+  end
+  assign r = fn_s3(s4);
+endmodule
+
+// floating multiply and the low half of the product (DX): unpack, the 48 x 48 multiply in the DSP blocks (3 stages), then normalise
+// and pack, or the low half.  Latency 7
+module sb_fmul (input logic clk, input logic [59:0] a, input logic [59:0] b, input logic [5:0] f, output logic [59:0] r);
+  import cdc_pkg::*;
+  typedef struct packed { logic neg; logic signed [15:0] es; logic isd, ib, rnd; } mm_t;
+  typedef struct packed { logic [95:0] p; logic [6:0] pp; logic neg; logic signed [15:0] es; logic ib, pz, isd; } dm_t;
+  fl_t x, y;
+  logic [47:0] xc, yc;
+  mm_t m1, m2, m3, m4, m5, m6;
+  (* use_dsp = "yes" *) logic [95:0] p1, p2, p3;
+  fn1_t n1; fn2_t n2;
+  dm_t d1;
+  logic [59:0] d2;
+  always_comb begin x = funpack(a); y = funpack(b); end
+  always_ff @(posedge clk) begin
+    xc <= x.c; yc <= y.c;
+    m1.neg <= x.neg ^ y.neg; m1.es <= 16'(int'(x.e) + int'(y.e)); m1.isd <= (f == 6'o42);
+    m1.ib <= (x.e == -16'sd1024) && (y.e == -16'sd1024); m1.rnd <= f[0];
+    p1 <= {48'd0, xc} * {48'd0, yc}; m2 <= m1;
+    p2 <= p1; m3 <= m2;
+    p3 <= p2; m4 <= m3;
+    // stage 5: the top bit of the product
+    n1 <= fn_s1('{zero: 1'b0, neg: m4.neg, m: NW'(p3), e: m4.es}, m4.rnd);
+    d1 <= '{p: p3, pp: 7'(msbn(NW'(p3))), neg: m4.neg, es: m4.es, ib: m4.ib, pz: (p3 == 96'd0), isd: m4.isd}; m5 <= m4;
+    // stage 6: round and shift / the low half
+    n2 <= fn_s2(n1);
+    if (d1.ib) d2 <= d1.neg ? ~{12'd0, d1.p[47:0]} : {12'd0, d1.p[47:0]};
+    else if (d1.pz) d2 <= 60'd0;
+    else begin
+      logic [95:0] lo;
+      int sh;
+      sh = int'(d1.pp) - 47; if (sh < 0) sh = 0;
+      lo = d1.p & ((96'd1 << sh) - 96'd1);
+      d2 <= fpack(d1.neg, d1.es, lo[47:0]);
+    end
+    m6 <= m5;
+  end
+  assign r = m6.isd ? d2 : fn_s3(n2);
+endmodule
+
+// the end of a division: the quotient (51 bits, from the divider) rounded, shifted and packed; or a result that needs no
+// normalising (division by zero, zero divided).  Latency 3 from the last quotient bit
+module sb_dvout (input logic clk, input logic run, input cdc_pkg::nrm_t n, input logic round, input logic [59:0] sp_d,
+                 output logic [59:0] r);
+  import cdc_pkg::*;
+  fn1_t f1; fn2_t f2;
+  logic o1, o2;
+  logic [59:0] d1, d2;
+  always_ff @(posedge clk) begin
+    f1 <= fn_s1(n, round); o1 <= !run; d1 <= sp_d;
+    f2 <= fn_s2(f1);       o2 <= o1;   d2 <= d1;
+  end
+  assign r = o2 ? d2 : fn_s3(f2);
+endmodule
+
+// normalise (NX, ZX), unpack (UX), pack (PX), count ones (CX).  Latency 3
+module sb_norm (input logic clk, input logic [59:0] w0, input logic [59:0] w1, input logic [5:0] f,
+                output logic [59:0] r0, output logic [17:0] r1);
+  import cdc_pkg::*;
+  nx1_t nx;
+  logic [59:0] uxc, px;
+  logic [17:0] uxe;
+  logic [23:0] pop;
+  logic [5:0] f1;
+  logic [59:0] q0;
+  logic [17:0] q1;
+  always_ff @(posedge clk) begin
+    nx <= nx_s1(w0); uxc <= ux_coef(w0); uxe <= ux_exp(w0); px <= px_result(w1, w0[17:0]); pop <= pop_s1(w0); f1 <= f;
+    q1 <= 18'd0;
+    case (f1)
+      6'o24, 6'o25: begin q0 <= nx_s2(nx); q1 <= nx.zero ? 18'd0 : 18'(nx.n); end
+      6'o26: begin q0 <= uxc; q1 <= uxe; end
+      6'o27: q0 <= px;
+      default: q0 <= pop_s2(pop);
+    endcase
+  end
+  assign r0 = q0; assign r1 = q1;
 endmodule

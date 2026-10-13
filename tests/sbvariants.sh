@@ -13,7 +13,7 @@ build() { # name, parameters
   printf "%-8s %s: " "$1" "$2"
   RTL=$d/Vcdc6000_sb tests/randcmp.sh 1 $n 120 sb | tail -3
 }
-build slow  "-GLAT_BOOL=1 -GLAT_SHIFT=2 -GLAT_LADD=2 -GLAT_FADD=4 -GLAT_MUL=4 -GLAT_INC=2 -GNINC=2 -GMEMLAT=2"
+build slow  "-GLAT_BOOL=1 -GLAT_SHIFT=2 -GLAT_INC=2 -GNINC=2 -GMEMLAT=2"
 build one   "-GNINC=1 -GLAT_INC=1 -GMEMLAT=1 -GNSK=4"
-build three "-GNINC=3 -GLAT_INC=3 -GLAT_BOOL=2 -GLAT_LADD=3 -GNSK=16 -GMEMLAT=2"
-build deep  "-GLAT_BOOL=3 -GLAT_SHIFT=4 -GLAT_LADD=5 -GLAT_FADD=7 -GLAT_MUL=6 -GLAT_INC=4 -GNINC=2 -GMEMLAT=2 -GNSK=2"
+build three "-GNINC=3 -GLAT_INC=3 -GLAT_BOOL=2 -GNSK=16 -GMEMLAT=2"
+build deep  "-GLAT_BOOL=3 -GLAT_SHIFT=4 -GLAT_INC=4 -GNINC=2 -GMEMLAT=2 -GNSK=2"

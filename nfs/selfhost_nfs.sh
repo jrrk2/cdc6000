@@ -13,7 +13,7 @@ python3 $H/pasclgo2img.py build/pasclgo.out build/parmlist.out build/drv.img --n
 python3 $H/pasclgo2img.py $H/run/pasclgo.out $H/run/parmlist.out build/compiler.img --compiler --b4=0x9c00
 rm -rf export_$which && mkdir export_$which && cp $H/pascal.cdc export_$which/input
 if [ $which = rtl ]; then
-  ../rtl/obj_dir/Vcdc6000_core $H/runtime_nfs.img build/compiler.img build/drv.img -r export_$which
+  ${CORE:-../rtl/obj_dir/Vcdc6000_core} $H/runtime_nfs.img build/compiler.img build/drv.img -r export_$which
 else
   $H/cdcemu $H/runtime_nfs.img build/compiler.img build/drv.img -r export_$which
 fi
