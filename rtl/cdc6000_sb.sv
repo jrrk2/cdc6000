@@ -359,11 +359,13 @@ module cdc6000_sb #(
   // the word fetched comes from memory.  If a store to it is being done this cycle, or still waits in the memory queue (the return
   // jump an RJ writes into the word it calls: the call's JP back can come before the store is done, now that it is not the only thing
   // going on), the word that came is void and is asked for again: muxing the store's data in here would put the memory queue in
-  // front of the whole decode, which is the longest path of the core
+  // front of the whole decode, which is the longest path of the core.  Only the queue entries are looked at, registers all: a store
+  // being done this cycle is still an entry, with the entry's address (s_a), so whether it is done this cycle (which depends on its
+  // data arriving on a bus) does not enter the decode either.
   logic [59:0] ret_data;
   logic        f_void;
   always_comb begin
-    f_void = st_v && (st_a == f_a);
+    f_void = 1'b0;
     for (int q = 0; q < Q; q++) if (mq_v[q] && mq_st[q] && mq_av[q] && mq_a[q][MEM_AW-1:0] == f_a) f_void = 1'b1;
     ret_data = irdata;
   end

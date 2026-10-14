@@ -23,21 +23,28 @@ a scoreboard (reservations and operand capture from the result buses), separate 
 multiply, divide, normalise, increment, branch), an ordered memory queue and a branch history table.  Design and
 measurements: `SUPERSCALAR.md`.  `make sb` builds `obj_dir_sb/Vcdc6000_sb`; `../tests/sbregress.sh` is the full regression
 (random programs against the C model, unit-count variants, floating point, the compiler fixed point, the NFS self-compile).
-On the board `build.tcl` selects it with `VM_DEFS="CORE_SB=1 SYS_DIV=10.000 CLK_HZ=100000000"` (100 MHz, WNS +0.18 ns).
+On the board `build.tcl` selects it with `VM_DEFS="CORE_SB=1 SYS_DIV=10.000 CLK_HZ=100000000"`; `VM_SYNTH="-retiming"
+VM_PLACE=ExtraTimingOpt` adds synthesis retiming and the timing-driven placer directive.
 
 Measured on the VC707 (`bench` and `compile pascal` in the shell, times in ms; the compile is the 1972 compiler compiling its
-own source with all run time checks on -- the compiler has no optimiser):
+own source with all run time checks on -- the compiler has no optimiser).  The board figures are from the in-order version of
+the scoreboarded core (before speculation and dual issue, commit d48f519 and earlier), which closed 100 MHz with WNS +0.18 ns:
 
-| | sequential core, 50 MHz | scoreboarded core, 100 MHz | speed-up |
+| | sequential core, 50 MHz | scoreboarded core, in order, 100 MHz | speed-up |
 |---|---|---|---|
 | `bench` sieve, 20 x 1000 | 70 | 18 | 3.9x |
 | `bench` arithmetic loop (200000 DIV/MOD) | 692 | 328 | 2.1x |
 | `compile pascal` (includes NFS transfers) | 12359 | 4752 | 2.6x |
-| cycles per instruction (simulated self-compile) | 2.12 | 0.70 (dual issue, speculation: SUPERSCALAR.md section 10) | 3.0x |
-| cycles, self-compile of the compiler | 73.8 M | 26.3 M | 2.81x |
+| cycles per instruction (simulated self-compile) | 2.12 | 1.13 | 1.9x |
+| cycles, self-compile of the compiler | 73.8 M | 42.4 M | 1.74x |
 | LUTs (whole board design) | 7.5 K (2.5 %) | 26.9 K (8.9 %) | |
 
 The arithmetic loop gains only the clock: the divide unit takes the same number of cycles on both cores.
+
+The current core (speculation past branches, dual issue, SUPERSCALAR.md section 10) does the self-compile in 26.3 M cycles
+(0.70 cycles an instruction, 2.81x the sequential core) and is being brought back to 100 MHz: the Vivado board build closes
+59.7 MHz, out of context with retiming it is at WNS -0.39 ns at 10 ns; the clocks each flow reaches are in SUPERSCALAR.md
+section 11.  Not yet measured on the board.
 
 ## Device bus and the Ethernet board
 Loads and stores to 120000B..+4111 leave the core on `dev_req/dev_we/dev_off/dev_wdata`, `dev_ack/dev_rdata` (state `S_DEV`).
