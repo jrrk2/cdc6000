@@ -2,12 +2,18 @@
 # directory:   vivado -mode batch -source <repo>/fpga/vc707-eth/build.tcl      (reports and vc707_cdc_eth.bit go to ./out)
 # The routed design is saved as out/routed.dcp: a change of the software alone then needs only swap.tcl (seconds, no P&R).
 # Env: VM_DEFS="CORE_SB=1" selects the scoreboarded core;  VM_DEFS="SYS_DIV=20.000 CLK_HZ=50000000" to change the core clock (the Ethernet side does not follow it).
-#      VM_SYNTH="-retiming" adds synthesis options (global register retiming);  VM_PLACE=ExtraTimingOpt changes the placer directive (default Explore).
+#      VM_SYNTH="-retiming" adds synthesis options (global register retiming); the speed set is
+#      VM_SYNTH="-directive PerformanceOptimized -retiming -no_lc -resource_sharing off -keep_equivalent_registers -fsm_extraction one_hot"
+#      VM_PLACE=ExtraTimingOpt changes the placer directive (default Explore).
 set part xc7vx485tffg1761-2
 set synth_opts {}
 if {[info exists env(VM_SYNTH)]} { set synth_opts $env(VM_SYNTH) }
 set place_dir Explore
 if {[info exists env(VM_PLACE)]} { set place_dir $env(VM_PLACE) }
+# VM_POSTOPT: the directive of the physical optimisation after routing (default AggressiveExplore; its incremental placement
+# step crashed Vivado 2020.1 once on a retimed netlist -- Explore then)
+set postopt_dir AggressiveExplore
+if {[info exists env(VM_POSTOPT)]} { set postopt_dir $env(VM_POSTOPT) }
 set here [file dirname [file normalize [info script]]]
 set repo [file normalize $here/../..]
 set eth $repo/fpga/eth-rtl
@@ -22,11 +28,15 @@ set defs [list SYNTHESIS]
 if {[info exists env(VM_DEFS)]} { lappend defs {*}$env(VM_DEFS) }
 synth_design -top vc707_cdc_eth -part $part -verilog_define $defs {*}$synth_opts
 report_utilization -file out/util_synth.rpt
+write_checkpoint -force out/synth.dcp
 opt_design
 place_design -directive $place_dir
 phys_opt_design -directive AggressiveExplore
+write_checkpoint -force out/placed.dcp
 route_design -directive Explore
-phys_opt_design -directive AggressiveExplore
+write_checkpoint -force out/routed_raw.dcp
+# a crash in the last step (it happened) resumes from here: open_checkpoint out/routed_raw.dcp, then the lines below
+phys_opt_design -directive $postopt_dir
 report_timing_summary -max_paths 10 -file out/timing.rpt
 report_utilization -file out/util.rpt
 report_methodology -file out/methodology.rpt

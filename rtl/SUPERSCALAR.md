@@ -247,12 +247,27 @@ the xc7-bitstream-tools fork, Project X-Ray), `--placer-heap-timingweight 60`, h
 | sequential | open flow | 50 MHz | 31.8 MHz | | |
 | scoreboarded, in-order | Vivado | 100 MHz | closes (WNS +0.18 ns) | 42.4 M cycles, 0.42 s | 89 |
 | scoreboarded, in-order | open flow | 50 MHz | 63.8 MHz, no hold violations | 0.65 s at 65 MHz | 58 |
-| dual issue, speculative | Vivado | 59.7 MHz | closes (WNS +0.30 ns) | 26.3 M cycles, 0.44 s | 85 |
-| dual issue, speculative | Vivado, out of context | 100 MHz | WNS -6.1 ns (about 62 MHz) | | |
+| dual issue, speculative, first fix | Vivado | 59.7 MHz | closes (WNS +0.30 ns) | 26.3 M cycles, 0.44 s | 85 |
+| dual issue, speculative, both fixes, speed set | Vivado | 95.2 MHz | closes (WNS +0.02 ns) | 26.3 M cycles, 0.28 s | 136 |
+| dual issue, speculative, both fixes, speed set | Vivado | 100 MHz | WNS -0.20 ns (best of four placements) | | |
 | dual issue, speculative | open flow | 35.7 MHz | 40.1 MHz, no hold violations | 0.66 s at 40 MHz | 57 |
 
-So far the dual-issue core buys per-clock work and gives it back in clock: on both flows it runs the self-compile in the time
-of the in-order core.  The clock has to come back for the exercise to pay, which is what the rest of this section is about.
+Before the fixes below the dual-issue core bought per-clock work and gave it back in clock: on both flows it ran the
+self-compile in the time of the in-order core.  With them, Vivado closes 95.2 MHz on the board design, 1.5x the MIPS of the
+in-order core at 100 MHz.  Measured on the board at 59.7 MHz (the first fix only): sieve 19 ms, arithmetic loop 536 ms,
+`compile pascal` 4553 ms, against 18 / 328 / 4752 ms for the in-order core at 100 MHz.
+
+The Vivado recipe that got there (`build.tcl`, all through environment variables): synthesis with `-directive
+PerformanceOptimized -retiming -no_lc -resource_sharing off -keep_equivalent_registers -fsm_extraction one_hot`, placement
+`ExtraTimingOpt`, `phys_opt_design AggressiveExplore` after placement, routing `Explore`, `phys_opt_design Explore` after
+routing (`AggressiveExplore` there crashed Vivado 2020.1 once, in its incremental placement step).  The speed synthesis set
+alone was worth 0.3 ns (WNS -0.52 to -0.20 at 10 ns); three post-route directives on that result changed nothing, and two
+other placer directives (`ExtraPostPlacementOpt`, `Explore`) were worse (-0.56, -0.64).  The path that bounds the board
+design is one the out-of-context runs do not see: the program RAM's clock-to-output, then the fetched word through the
+two-slot decode into the decode register (17 levels, 76 % routing).  Taking it out costs cycles: the RAM's output register
+(MEMLAT = 2) makes the self-compile 30.6 M cycles (+16.5 %), decoding fetched words only from the stack a cycle later about
++10 % (2.8 M stack misses), a registered branch decision 28.2 M (+7.1 %) for 0.06 ns -- each of them a net loss against
+95 MHz, so the core stays as it is.
 
 What the open flow loses to Vivado is placement, not mapping: nextpnr's worst path on the in-order core is 5.6 ns of logic in
 25 cells and 9.3 ns of routing in 26 nets, with single hops of 0.7-0.8 ns over 20-34 tiles; Vivado's report of the same cone
