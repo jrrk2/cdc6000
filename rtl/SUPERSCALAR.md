@@ -202,7 +202,7 @@ an ordered memory queue, early branch resolution, a 2-bit branch history table u
 | cycles (compile of the compiler, fixed-point run) | 73.8 M | **42.4 M** (1.74x) |
 | cycles per instruction | 2.12 | **about 1.13** |
 | clock (board build) | 50 MHz | 100 MHz target; out-of-context P&R at 10 ns: WNS -0.13 ns |
-| LUTs | ~10 K | ~26 K (9 DSP) |
+| LUTs (whole board design) | 7.5 K | 26.9 K (9 DSP) |
 
 Verification: `tests/sbregress.sh` (random programs against the C model for the default and four unit-count/latency
 variants, float/integer/shift test, compiler fixed point, NFS self-compile).  The remaining branch stall is mostly the

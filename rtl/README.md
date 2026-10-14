@@ -35,7 +35,7 @@ own source with all run time checks on -- the compiler has no optimiser):
 | `compile pascal` (includes NFS transfers) | 12359 | 4752 | 2.6x |
 | cycles per instruction (simulated self-compile) | 2.12 | 1.13 | 1.9x |
 | cycles, self-compile of the compiler | 73.8 M | 42.4 M | 1.74x |
-| LUTs | ~10 K | ~26 K | |
+| LUTs (whole board design) | 7.5 K (2.5 %) | 26.9 K (8.9 %) | |
 
 The arithmetic loop gains only the clock: the divide unit takes the same number of cycles on both cores.
 
