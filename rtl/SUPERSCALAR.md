@@ -207,3 +207,29 @@ an ordered memory queue, early branch resolution, a 2-bit branch history table u
 Verification: `tests/sbregress.sh` (random programs against the C model for the default and four unit-count/latency
 variants, float/integer/shift test, compiler fixed point, NFS self-compile).  The remaining branch stall is mostly the
 branch unit waiting for the long adder (the compiler subtracts, then tests): 83 % of the held cycles.
+
+## 10  Out-of-order techniques and dual issue (2026-10-14)
+
+Measured on the self-compile (host/stage2, 37.6 M instructions as the core counts them, listing identical in every case):
+
+| step | cycles | instructions a cycle | speed-up over the sequential core |
+|---|---|---|---|
+| sequential core | 73.8 M | 0.47 | 1 |
+| scoreboarded core, in-order issue, branches hold issue | 42.4 M | 0.89 | 1.74x |
+| SPEC: issue goes on past a branch waiting in the branch unit; shadow copy of the registers, marks on units, pipeline stages, memory queue, tags and reservations, undo on a wrong guess | 37.6 M | 1.00 | 1.96x |
+| DUAL: two decode slots from an 8 parcel window, the second instruction takes the first's tags | 33.1 M | 1.14 | 2.23x |
+| shadow reservations: a speculative instruction may take a register over from a pre-branch instruction still to write (its result goes into the copy, and it is the reservation again on an undo) | 30.2 M | 1.25 | 2.44x |
+| second boolean unit (NBOOL = 2) and the address / store data of the memory queue head taken off the result bus in the cycle they appear | **26.3 M** | **1.43** | **2.81x** |
+
+Where the remaining cycles go (26.3 M): decode register empty 4.7 M (18 %: 1.9 M in the cycle after one of the 1.0 M redirects,
+the rest stack misses), a unit busy 1.0 M (the branch unit with a second branch waiting 0.4 M, long add 0.3 M, increment 0.25 M,
+shift 0.2 M), both slots issuing in 13.3 M cycles.  The branch unit decided 3.66 M branches, 0.74 M of them against the
+2 bit history table's guess.
+
+Bugs the random programs found on the way, all real hazards of a faster front end: a speculative result written before its
+branch resolved (hence the shadow copy); the copy missing a write made in the cycle a branch entered the unit; the RJ return-jump
+store overtaken by the JP back to that word (the stack entry is invalidated at RJ issue and a fetch is served from a store still in
+the memory queue); and a take-over in the commit cycle treated as speculative-over-speculative (the marks of the branch just kept
+are still set then).  tests/sbvariants.sh with MEMLAT=2 was what caught the last one: longer latencies make the windows wider.
+
+Timing: see rtl/README.md for the clocks each flow closes.

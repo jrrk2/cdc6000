@@ -33,8 +33,8 @@ own source with all run time checks on -- the compiler has no optimiser):
 | `bench` sieve, 20 x 1000 | 70 | 18 | 3.9x |
 | `bench` arithmetic loop (200000 DIV/MOD) | 692 | 328 | 2.1x |
 | `compile pascal` (includes NFS transfers) | 12359 | 4752 | 2.6x |
-| cycles per instruction (simulated self-compile) | 2.12 | 1.13 | 1.9x |
-| cycles, self-compile of the compiler | 73.8 M | 42.4 M | 1.74x |
+| cycles per instruction (simulated self-compile) | 2.12 | 0.70 (dual issue, speculation: SUPERSCALAR.md section 10) | 3.0x |
+| cycles, self-compile of the compiler | 73.8 M | 26.3 M | 2.81x |
 | LUTs (whole board design) | 7.5 K (2.5 %) | 26.9 K (8.9 %) | |
 
 The arithmetic loop gains only the clock: the divide unit takes the same number of cycles on both cores.
