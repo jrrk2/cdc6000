@@ -121,7 +121,7 @@ int main(int argc, char **argv)
     if (perf) {
         static const char *nm[16] = {"cycles", "issued", "decode register empty", "held for a branch", "unit busy", "destination reserved",
             "no tag", "memory queue full", "waiting to drain", "redirects", "decode waited for a word", "empty within 3 cycles of a redirect",
-            "memory head waits for its address", "memory head waits for store data", "empty: only no-operations left in the word", "empty: waiting for a word (not after a redirect)"};
+            "memory head waits for its address", "memory head waits for store data", "branches decided in the branch unit", "of them guessed wrong"};
         for (int q = 0; q < 16; q++) {
             uint32_t v = 0;
             for (int w = 0; w < 32; w++) v |= ((top->dbg_perf[(32 * q + w) / 32] >> ((32 * q + w) % 32)) & 1) << w;
