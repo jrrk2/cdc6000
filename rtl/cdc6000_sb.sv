@@ -356,18 +356,16 @@ module cdc6000_sb #(
     fill_i = sk_wp;
     if (sk_v[sk_wp] && sk_a[sk_wp] == dpa) fill_i = sk_wp + 1'b1;
   end
-  // the word fetched: from memory, unless a store to it is being done or still waits in the memory queue with its data (the return jump
-  // an RJ writes into the word it calls: the call's JP back can come before the store is done, now that it is not the only thing going on)
-  logic [59:0] ret_data, mqb_d;
-  logic        mqb_hit;
+  // the word fetched comes from memory.  If a store to it is being done this cycle, or still waits in the memory queue (the return
+  // jump an RJ writes into the word it calls: the call's JP back can come before the store is done, now that it is not the only thing
+  // going on), the word that came is void and is asked for again: muxing the store's data in here would put the memory queue in
+  // front of the whole decode, which is the longest path of the core
+  logic [59:0] ret_data;
+  logic        f_void;
   always_comb begin
-    mqb_hit = 1'b0; mqb_d = 60'd0;
-    for (int k = 0; k < Q; k++) begin                    // oldest first: the newest store to the word wins
-      logic [1:0] q;
-      q = mq_head + 2'(k);
-      if (mq_v[q] && mq_st[q] && mq_av[q] && mq_dv[q] && mq_a[q][MEM_AW-1:0] == f_a) begin mqb_hit = 1'b1; mqb_d = mq_d[q]; end
-    end
-    ret_data = mqb_hit ? mqb_d : (st_v && st_a == f_a) ? st_d : irdata;      // (the store being done is still in the queue: it is in mqb too)
+    f_void = st_v && (st_a == f_a);
+    for (int q = 0; q < Q; q++) if (mq_v[q] && mq_st[q] && mq_av[q] && mq_a[q][MEM_AW-1:0] == f_a) f_void = 1'b1;
+    ret_data = irdata;
   end
 
   logic [NSK-1:0] hit_n;
@@ -386,14 +384,14 @@ module cdc6000_sb #(
       hit_n[n] = sk_v[n] && (sk_a[n] == dpa);
       if (hit_n[n]) dw = dw | sk_d[n];
     end
-    if (f_v && !f_drop && f_a == dpa) begin
+    if (f_v && !f_drop && !f_void && f_a == dpa) begin
       dw = ret_data;
       dec_hit = 1'b1;
     end else dec_hit = |hit_n;
     // and the word after it, for the second instruction of a pair
     dw1 = 60'd0; dec_hit1 = 1'b0;
     for (int n = 0; n < NSK; n++) if (sk_v[n] && (sk_a[n] == dpa + MEM_AW'(1))) begin dw1 = dw1 | sk_d[n]; dec_hit1 = 1'b1; end
-    if (f_v && !f_drop && f_a == dpa + MEM_AW'(1)) begin dw1 = ret_data; dec_hit1 = 1'b1; end
+    if (f_v && !f_drop && !f_void && f_a == dpa + MEM_AW'(1)) begin dw1 = ret_data; dec_hit1 = 1'b1; end
     // prefetch candidates in order: the word being decoded, the target of a branch waiting in the decode register, the next three words
     pf_a[0] = dpa; pf_a[1] = pf_tgt; pf_a[2] = dpa + MEM_AW'(1); pf_a[3] = dpa + MEM_AW'(2); pf_a[4] = dpa + MEM_AW'(3);
     pf_c[0] = 1'b1; pf_c[1] = pf_tv; pf_c[2] = 1'b1; pf_c[3] = 1'b1; pf_c[4] = 1'b1;
@@ -401,7 +399,7 @@ module cdc6000_sb #(
       logic inst;
       inst = 1'b0;
       for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == pf_a[q]) inst = 1'b1;
-      if (f_v && !f_drop && f_a == pf_a[q]) inst = 1'b1;
+      if (f_v && !f_drop && !f_void && f_a == pf_a[q]) inst = 1'b1;
       present[q] = inst || !pf_c[q];
     end
     want_v = 1'b0; want_a = dpa;
@@ -445,6 +443,11 @@ module cdc6000_sb #(
   // (and counted with the next instruction)
   logic        restA, restB;
   logic [4:0]  trailA, trailB;
+  logic [17:0] dp_w1, dp_wn[0:3];                       // dp_w + 1, and dp_w + 0..3: from the register, so that a late sum only selects
+  always_comb begin
+    dp_w1 = dp_w + 18'd1;
+    dp_wn[0] = dp_w; dp_wn[1] = dp_w1; dp_wn[2] = dp_w + 18'd2; dp_wn[3] = dp_w + 18'd3;
+  end
   logic [17:0] ndA_w, ndB_w;
   logic [1:0]  ndA_s, ndB_s;
   always_comb begin
@@ -454,11 +457,21 @@ module cdc6000_sb #(
       if (4'(q) >= endB && q[2] == endB[2] && pp[q][14:9] != 6'o46) restB = 1'b0;
     end
     trailA = (endA[1:0] != 2'd0 && restA) ? 5'(3'd4 - endA[1:0]) : 5'd0;
-    ndA_w = dp_w + 18'(endA[3:2]) + ((endA[1:0] != 2'd0 && restA) ? 18'd1 : 18'd0);
+    ndA_w = dp_wn[2'(endA[3:2]) + 2'((endA[1:0] != 2'd0) && restA)];
     ndA_s = (endA[1:0] != 2'd0 && restA) ? 2'd0 : endA[1:0];
     trailB = (endB[1:0] != 2'd0 && restB) ? 5'(3'd4 - endB[1:0]) : 5'd0;
-    ndB_w = dp_w + 18'(endB[3:2]) + ((endB[1:0] != 2'd0 && restB) ? 18'd1 : 18'd0);
+    ndB_w = dp_wn[2'(endB[3:2]) + 2'((endB[1:0] != 2'd0) && restB)];
     ndB_s = (endB[1:0] != 2'd0 && restB) ? 2'd0 : endB[1:0];
+  end
+
+  // the history table is read for the four parcels of the word being decoded and of the one after it, from the registered dp_w, so
+  // that the late parcel positions only select among the eight entries (the table read is otherwise on the longest path of the core)
+  logic bht_rd[0:1][0:3];
+  always_comb begin
+    for (int p = 0; p < 4; p++) begin
+      bht_rd[0][p] = bht[{dp_w[BHT_AW-3:0], 2'(p)}][1];
+      bht_rd[1][p] = bht[{dp_w1[BHT_AW-3:0], 2'(p)}][1];
+    end
   end
 
   // ---- the guess: unconditional jumps and calls with a known place are followed at once; a conditional branch as the table says.
@@ -471,14 +484,14 @@ module cdc6000_sb #(
     d_condA = foundA && !badA && (pfA >= 6'o03 && pfA <= 6'o07);
     d_staticA = foundA && !badA && ((pfA == 6'o01) || (pfA == 6'o02 && pcA0[8:6] == 3'd0));
     d_idxA = {dp_w[BHT_AW-3:0], posA[1:0]};
-    d_predA = bht[d_idxA][1];
+    d_predA = bht_rd[0][posA[1:0]];                       // read for every parcel from the registered dp_w; the late position selects
     d_takepA = d_staticA || (d_condA && d_predA);
     d_tgtA = (pfA == 6'o01) ? KA + 18'd1 : KA;
-    wB = dp_w + 18'(posB[2]);
+    wB = posB[2] ? dp_w1 : dp_w;
     d_condB = foundB && (pfB >= 6'o03 && pfB <= 6'o07);
     d_staticB = foundB && ((pfB == 6'o01) || (pfB == 6'o02 && pcB0[8:6] == 3'd0));
     d_idxB = {wB[BHT_AW-3:0], posB[1:0]};
-    d_predB = bht[d_idxB][1];
+    d_predB = bht_rd[posB[2]][posB[1:0]];
     d_takepB = d_staticB || (d_condB && d_predB);
     d_tgtB = (pfB == 6'o01) ? KB + 18'd1 : KB;
     canB = foundB && !d_takepA;
@@ -975,6 +988,8 @@ module cdc6000_sb #(
   logic [60:0] h_bf;
   logic [17:0] h_a;
   logic        h_st;
+  logic        s_ok, s_dev, s_io;                       // the store at the head, decided on its entry alone
+  logic [17:0] s_a;
   logic [59:0] h_d;
   logic [4:0]  h_rt;
   logic        pipe_empty;                              // no BRAM load on its way back
@@ -996,10 +1011,15 @@ module cdc6000_sb #(
     h_d = mq_d[mq_head]; h_dv = mq_dv[mq_head];
     if (mq_dw[mq_head] && h_bf[60]) begin h_d = h_bf[59:0]; h_dv = 1'b1; end
     h_dev = is_dev(h_a); h_io = is_io(h_a);
-    // a speculative entry: a load from memory goes ahead, a store or an I/O access waits for the branch (and nothing in the cycle
+    // a load.  A speculative entry: a load from memory goes ahead, an I/O access waits for the branch (and nothing in the cycle
     // the guess is undone)
-    h_ok = mq_v[mq_head] && h_av && (!h_st || h_dv) && (boot == 3'd4) &&
-           !(mq_spec[mq_head] && (sq_r || (!commit_r && (h_st || h_dev || h_io))));
+    h_ok = mq_v[mq_head] && h_av && !h_st && (boot == 3'd4) &&
+           !(mq_spec[mq_head] && (sq_r || (!commit_r && (h_dev || h_io))));
+    // a store.  Its address comes from the entry, never from the bus: the address meets the fetch (f_void), which meets the whole
+    // decode, and nothing of that may start at an adder.  So the store's decisions are made on s_a alone, apart from h_ok and h_a.
+    // A speculative store waits for the branch.
+    s_a = mq_a[mq_head]; s_dev = is_dev(s_a); s_io = is_io(s_a);
+    s_ok = mq_v[mq_head] && mq_av[mq_head] && h_st && h_dv && (boot == 3'd4) && !(mq_spec[mq_head] && (sq_r || !commit_r));
     pipe_empty = !ld_v && !ld_v2;
   end
 
@@ -1020,33 +1040,38 @@ module cdc6000_sb #(
       default: ;
     endcase
     ld_v_next = 1'b0; ld_t_next = 5'd0;
-    if (h_ok && !halt_req) begin
+    if (s_ok && !halt_req) begin                          // a store: address s_a from the entry (see above)
+      if (s_dev) begin
+        if (pipe_empty && !dev_cool) begin
+          dev_req = 1'b1; dev_we = 1'b1; dev_off = s_a[12:0]; dev_wdata = h_d;
+          if (dev_ack) mq_pop = 1'b1;
+        end
+      end else if (s_io) begin
+        if (s_a[2:0] == 3'd1) begin
+          if (tx_ready) begin tx_valid_c = 1'b1; tx_char_c = h_d[5:0]; mq_pop = 1'b1; end
+        end else if (s_a[2:0] == 3'd3) begin
+          if (fo_ready) begin fo_valid_c = 1'b1; fo_word_c = h_d; mq_pop = 1'b1; end
+        end else begin
+          mq_pop = 1'b1;                                // IO_FILE, IO_HALT and the rest: handled with the pop
+          if (s_a[2:0] == 3'd4) halt_set = 1'b1;
+        end
+      end else begin
+        daddr = MEM_AW'(s_a); dwe = 1'b1; dwdata = h_d; st_v = 1'b1; st_a = MEM_AW'(s_a); st_d = h_d;
+        mq_pop = 1'b1;
+      end
+    end else if (h_ok && !halt_req) begin                 // a load: address h_a, from the entry or the bus
       if (h_dev) begin
         if (pipe_empty && !dev_cool) begin
-          dev_req = 1'b1; dev_we = h_st; dev_off = h_a[12:0]; dev_wdata = h_d;
-          if (dev_ack) begin
-            mq_pop = 1'b1;
-            if (!h_st) begin io_res_v = 1'b1; io_res_t = h_rt; io_res_d = dev_rdata; end
-          end
+          dev_req = 1'b1; dev_off = h_a[12:0];
+          if (dev_ack) begin mq_pop = 1'b1; io_res_v = 1'b1; io_res_t = h_rt; io_res_d = dev_rdata; end
         end
       end else if (h_io) begin
-        if (h_st) begin
-          if (h_a[2:0] == 3'd1) begin
-            if (tx_ready) begin tx_valid_c = 1'b1; tx_char_c = h_d[5:0]; mq_pop = 1'b1; end
-          end else if (h_a[2:0] == 3'd3) begin
-            if (fo_ready) begin fo_valid_c = 1'b1; fo_word_c = h_d; mq_pop = 1'b1; end
-          end else begin
-            mq_pop = 1'b1;                              // IO_FILE, IO_HALT and the rest: handled with the pop
-            if (h_a[2:0] == 3'd4) halt_set = 1'b1;
-          end
-        end else if (pipe_empty && rx_valid) begin
+        if (pipe_empty && rx_valid) begin
           rx_take_c = 1'b1; mq_pop = 1'b1;
           io_res_v = 1'b1; io_res_t = h_rt; io_res_d = rx_eof ? M60 : {54'd0, rx_char};
         end
       end else begin
-        daddr = MEM_AW'(h_a);
-        if (h_st) begin dwe = 1'b1; dwdata = h_d; st_v = 1'b1; st_a = MEM_AW'(h_a); st_d = h_d; end
-        else begin ld_v_next = 1'b1; ld_t_next = h_rt; end
+        daddr = MEM_AW'(h_a); ld_v_next = 1'b1; ld_t_next = h_rt;
         mq_pop = 1'b1;
       end
     end
@@ -1083,17 +1108,17 @@ module cdc6000_sb #(
       endcase
 
       // ---- instruction fetch: the word that came, then a new request
-      if (f_v && !f_drop) begin
+      if (f_v && !f_drop && !f_void) begin
         sk_d[fill_i] <= ret_data; sk_a[fill_i] <= f_a; sk_v[fill_i] <= 1'b1;
         sk_wp <= fill_i + 1'b1;
       end
       // a store into a word of the stack: write through (not into the entry that is being replaced this cycle: ret_data has the store)
-      if (st_v) for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == st_a && !(f_v && !f_drop && n == int'(fill_i))) sk_d[n] <= st_d;
+      if (st_v) for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == st_a && !(f_v && !f_drop && !f_void && n == int'(fill_i))) sk_d[n] <= st_d;
       // an RJ: the word it calls gets the return jump from the memory queue later; until then the stack must not hold it, so that a
       // JP back to it is fetched again (and served from the queue, see ret_data)
       for (int s = 0; s < 2; s++) if (issue_fire[s] && D[s].rj) begin
         for (int n = 0; n < NSK; n++) if (sk_v[n] && sk_a[n] == MEM_AW'(dr[s].K)) sk_v[n] <= 1'b0;
-        if (f_v && !f_drop && f_a == MEM_AW'(dr[s].K)) sk_v[fill_i] <= 1'b0;
+        if (f_v && !f_drop && !f_void && f_a == MEM_AW'(dr[s].K)) sk_v[fill_i] <= 1'b0;
       end
       f_v <= 1'b0; f_drop <= 1'b0;
       if (boot == 3'd4 && want_v) begin
@@ -1292,7 +1317,7 @@ module cdc6000_sb #(
         halt_cnt <= halt_cnt + 7'd1;
         if (halt_cnt == HALT_WAIT[6:0]) halted <= 1'b1;
       end
-      if (mq_pop && h_io && h_st && h_a[2:0] == 3'd2) io_file <= h_d;
+      if (mq_pop && s_ok && s_io && s_a[2:0] == 3'd2) io_file <= h_d;
     end
   end
 

@@ -2,7 +2,12 @@
 # directory:   vivado -mode batch -source <repo>/fpga/vc707-eth/build.tcl      (reports and vc707_cdc_eth.bit go to ./out)
 # The routed design is saved as out/routed.dcp: a change of the software alone then needs only swap.tcl (seconds, no P&R).
 # Env: VM_DEFS="CORE_SB=1" selects the scoreboarded core;  VM_DEFS="SYS_DIV=20.000 CLK_HZ=50000000" to change the core clock (the Ethernet side does not follow it).
+#      VM_SYNTH="-retiming" adds synthesis options (global register retiming);  VM_PLACE=ExtraTimingOpt changes the placer directive (default Explore).
 set part xc7vx485tffg1761-2
+set synth_opts {}
+if {[info exists env(VM_SYNTH)]} { set synth_opts $env(VM_SYNTH) }
+set place_dir Explore
+if {[info exists env(VM_PLACE)]} { set place_dir $env(VM_PLACE) }
 set here [file dirname [file normalize [info script]]]
 set repo [file normalize $here/../..]
 set eth $repo/fpga/eth-rtl
@@ -15,10 +20,10 @@ read_verilog -sv [list $eth/eth_mac_1g.sv $eth/axis_gmii_rx.sv $eth/axis_gmii_tx
 read_xdc $here/vc707_cdc_eth.xdc
 set defs [list SYNTHESIS]
 if {[info exists env(VM_DEFS)]} { lappend defs {*}$env(VM_DEFS) }
-synth_design -top vc707_cdc_eth -part $part -verilog_define $defs
+synth_design -top vc707_cdc_eth -part $part -verilog_define $defs {*}$synth_opts
 report_utilization -file out/util_synth.rpt
 opt_design
-place_design -directive Explore
+place_design -directive $place_dir
 phys_opt_design -directive AggressiveExplore
 route_design -directive Explore
 phys_opt_design -directive AggressiveExplore

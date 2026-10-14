@@ -233,3 +233,37 @@ the memory queue); and a take-over in the commit cycle treated as speculative-ov
 are still set then).  tests/sbvariants.sh with MEMLAT=2 was what caught the last one: longer latencies make the windows wider.
 
 Timing: see rtl/README.md for the clocks each flow closes.
+
+## 11  Timing: Vivado and the open flow (2026-10-14)
+
+The clock each flow reaches on the board design (`fpga/vc707-eth`, core plus Ethernet), the self-compile cycles from
+section 10, and what that makes in time.  Vivado 2020.1 runs `build.tcl` (Explore placement, AggressiveExplore
+`phys_opt_design` after placement and after routing).  The open flow is `openflow.sh` (sv2v, yosys, nextpnr-himbaechel on
+the xc7-bitstream-tools fork, Project X-Ray), `--placer-heap-timingweight 60`, hold fixing on.
+
+| core | flow | clock set | clock reached | self-compile | MIPS on it |
+|---|---|---|---|---|---|
+| sequential | Vivado | 50 MHz | closes | 73.8 M cycles, 1.48 s | 25 |
+| sequential | open flow | 50 MHz | 31.8 MHz | | |
+| scoreboarded, in-order | Vivado | 100 MHz | closes (WNS +0.18 ns) | 42.4 M cycles, 0.42 s | 89 |
+| scoreboarded, in-order | open flow | 50 MHz | 63.8 MHz, no hold violations | 0.65 s at 65 MHz | 58 |
+| dual issue, speculative | Vivado | 59.7 MHz | closes (WNS +0.30 ns) | 26.3 M cycles, 0.44 s | 85 |
+| dual issue, speculative | Vivado, out of context | 100 MHz | WNS -6.1 ns (about 62 MHz) | | |
+| dual issue, speculative | open flow | 35.7 MHz | 40.1 MHz, no hold violations | 0.66 s at 40 MHz | 57 |
+
+So far the dual-issue core buys per-clock work and gives it back in clock: on both flows it runs the self-compile in the time
+of the in-order core.  The clock has to come back for the exercise to pay, which is what the rest of this section is about.
+
+What the open flow loses to Vivado is placement, not mapping: nextpnr's worst path on the in-order core is 5.6 ns of logic in
+25 cells and 9.3 ns of routing in 26 nets, with single hops of 0.7-0.8 ns over 20-34 tiles; Vivado's report of the same cone
+has the same depth and about 4 ns of routing.  The upstream `timing_opt` pass wired into the fork's post-placement step
+(`-o timing-opt=4`) moves 7-14 cells per round on 60-70 critical paths and takes the in-order core from 59.9 to 62.5 MHz; it
+cannot touch the cells the packer clusters (LUT with its flop, LUT6_2 pairs, carry chains), which is most of the path.
+The flag sets compared on the dual-issue netlist: delay matrix with timing weight 100, 32.7 MHz; plus congestion spreading
+and timing-driven rip-up, 40.9 MHz; plus hold fixing, 43.1 MHz; timing weight 60 without the matrix, 38.8-40.1 MHz.
+
+The dual-issue core's worst path under Vivado (34 levels, 84 % routing): a unit's operand register, the 18-bit add, the
+store address at the memory-queue head, the fetch-void check (a store this cycle to the word just fetched), parcel selection,
+the second decode slot, the decode register.  The first cut is in the RTL now: the store at the queue head is decided on the
+registered entry alone (`s_a`, `s_ok`), so no adder sits in front of the fetch-void check.  The next cut, if the retiming and
+physical-optimisation run does not close 100 MHz, is to register the decode window, at a cycle per redirect.
