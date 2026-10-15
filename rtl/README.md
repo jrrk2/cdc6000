@@ -27,24 +27,26 @@ On the board `build.tcl` selects it with `VM_DEFS="CORE_SB=1 SYS_DIV=10.000 CLK_
 VM_PLACE=ExtraTimingOpt` adds synthesis retiming and the timing-driven placer directive.
 
 Measured on the VC707 (`bench` and `compile pascal` in the shell, times in ms; the compile is the 1972 compiler compiling its
-own source with all run time checks on -- the compiler has no optimiser).  The board figures are from the in-order version of
-the scoreboarded core (before speculation and dual issue, commit d48f519 and earlier), which closed 100 MHz with WNS +0.18 ns:
+own source with all run time checks on -- the compiler has no optimiser).  The in-order column is the scoreboarded core
+before speculation and dual issue (commit d48f519 and earlier, WNS +0.18 ns at 100 MHz); the last two are the current core
+(speculation past branches, dual issue, SUPERSCALAR.md section 10), which closes 95.2 MHz with the speed synthesis set and
+100 MHz with the overconstrained placement and chained post-route passes of section 11 (2026-10-15):
 
-| | sequential core, 50 MHz | scoreboarded core, in order, 100 MHz | speed-up |
-|---|---|---|---|
-| `bench` sieve, 20 x 1000 | 70 | 18 | 3.9x |
-| `bench` arithmetic loop (200000 DIV/MOD) | 692 | 328 | 2.1x |
-| `compile pascal` (includes NFS transfers) | 12359 | 4752 | 2.6x |
-| cycles per instruction (simulated self-compile) | 2.12 | 1.13 | 1.9x |
-| cycles, self-compile of the compiler | 73.8 M | 42.4 M | 1.74x |
-| LUTs (whole board design) | 7.5 K (2.5 %) | 26.9 K (8.9 %) | |
+| | sequential core, 50 MHz | scoreboarded, in order, 100 MHz | dual issue, 95.2 MHz | dual issue, 100 MHz | speed-up |
+|---|---|---|---|---|---|
+| `bench` sieve, 20 x 1000 | 70 | 18 | 12 | 11 | 6.4x |
+| `bench` arithmetic loop (200000 DIV/MOD) | 692 | 328 | 336 | 320 | 2.2x |
+| `compile pascal` (includes NFS transfers) | 12359 | 4752 | 3406 | 3299 | 3.7x |
+| cycles per instruction (simulated self-compile) | 2.12 | 1.13 | 0.70 | 0.70 | 3.0x |
+| cycles, self-compile of the compiler | 73.8 M | 42.4 M | 26.3 M | 26.3 M | 2.81x |
+| LUTs (whole board design) | 7.5 K (2.5 %) | 26.9 K (8.9 %) | 42.3 K (13.9 %) | 42.3 K (13.9 %) | |
 
-The arithmetic loop gains only the clock: the divide unit takes the same number of cycles on both cores.
-
-The current core (speculation past branches, dual issue, SUPERSCALAR.md section 10) does the self-compile in 26.3 M cycles
-(0.70 cycles an instruction, 2.81x the sequential core) and is being brought back to 100 MHz: the Vivado board build closes
-59.7 MHz, out of context with retiming it is at WNS -0.39 ns at 10 ns; the clocks each flow reaches are in SUPERSCALAR.md
-section 11.  Not yet measured on the board.
+The arithmetic loop gains only the clock: the divide unit takes the same number of cycles on all three cores.  The 95.2 MHz
+column is the build with the UART fix of 090b058 (0.08 ns short on paper, runs); the 100 MHz column's compile time is from
+the build 0.20 ns short, which runs at the same cycle count as the closed one (the closed build measured the same bench).
+Of the compile's 3.3 s about 0.26 s is the compiler itself: the rest is the NFS driver (Pascal, compiled by the same
+compiler) moving the source, the listing and the object through the Ethernet window a byte at a time, and the server's
+round trips.
 
 ## Device bus and the Ethernet board
 Loads and stores to 120000B..+4111 leave the core on `dev_req/dev_we/dev_off/dev_wdata`, `dev_ack/dev_rdata` (state `S_DEV`).

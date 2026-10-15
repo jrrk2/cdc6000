@@ -275,9 +275,9 @@ on `clk_sys_unbuf` for `opt_design`, `place_design` and the post-placement `phys
 `opt_design ExploreWithRemap`, placement `ExtraTimingOpt` with 0.30 ns of uncertainty and routing `Explore` was the one,
 -0.248 after placement, -0.638 after routing, then post-route `phys_opt_design` passes each gained: `Explore` -0.227,
 `AggressiveExplore` -0.196, `AggressiveFanoutOpt` -0.102, a second `AggressiveFanoutOpt` -0.075 and
-`AlternateFlowWithRetiming` 0.000 -- no failing endpoint, hold +0.084 ns.  The other three (0.30 ns with `opt_design
-Explore`, 0.20 ns with `ExtraNetDelay_low` placement and `AggressiveExplore` routing, 0.50 ns) were worse after routing
-(-0.60, -0.28, -1.04).  The scripts are `fpga/vc707-eth/pr2.tcl` (re-place from `out/synth.dcp` with the overconstraint, then
+`AlternateFlowWithRetiming` 0.000 -- no failing endpoint, hold +0.084 ns.  A second recipe closed as well: 0.20 ns of uncertainty, `ExtraNetDelay_low`
+placement and `AggressiveExplore` routing, -0.28 after routing and +0.005 after the three post-route passes.  The other two
+(0.30 ns with `opt_design Explore`, 0.50 ns) ended at -0.125 and -0.327.  The scripts are `fpga/vc707-eth/pr2.tcl` (re-place from `out/synth.dcp` with the overconstraint, then
 the three post-route passes) and `resume2.tcl` (more post-route passes until they stop gaining, `route_design -tns_cleanup`
 between rounds), run from the build directory after `build.tcl` or its synthesis lines; `build.tcl` keeps its single-pass
 flow.  The worst paths at the end are 85 % routing over 17 levels, so the
