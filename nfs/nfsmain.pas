@@ -4,7 +4,9 @@ BEGIN
    BEGIN
       INITED := TRUE;  XID := 5329152;  SPIN := 0;  CONSOLE := 0;  EDITED := 0;  LBASEN := 0;  INITTABLES;  INITCMDS;
       IF REG[9] MOD 128 <> 0 THEN SRVIP[3] := REG[9] MOD 128;   (* DIP switches 0-6: the server's host number *)
-      NETOK := NETSTART(0)
+      NETOK := NETSTART(0);
+      RDOK := REG[12] > 0;                        (* a ramdisk in the build: it is used when there is no network *)
+      RAMMODE := RDOK AND NOT NETOK
    END;
    IF MB.OP = 5 THEN
    BEGIN

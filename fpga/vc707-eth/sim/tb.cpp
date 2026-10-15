@@ -1,8 +1,9 @@
 // Testbench for cdc_eth_core: the whole board minus the PHY.  The MAC stream is driven with the frames of the server model
 // (nfs/netmodel.h), so the DMA, the packet RAM, the registers and the core run the NFS driver exactly as the board will.
-//   Vcdc_eth_core -r exportdir [-n maxcycles] [-u uartinput]
+//   Vcdc_eth_core -r exportdir [-n maxcycles] [-u uartinput] [-q quietcycles]
 // The UART is simulated at the bit level (434 clocks a bit, as on the board): -u gives the bytes sent to the board, what the
-// board sends is printed on stdout.  With -u the run ends when the input is used up and the board has been quiet for a while.
+// board sends is printed on stdout.  With -u the run ends when the input is used up and the board has been quiet for
+// -q cycles (default 30 million; a compile on the ramdisk is silent for longer).
 #include "Vcdc_eth_core.h"
 #include "Vcdc_eth_core___024root.h"
 #include "verilated.h"
@@ -14,7 +15,7 @@ int main(int argc, char **argv)
     VerilatedContext *ctx = new VerilatedContext;
     ctx->commandArgs(argc, argv);
     long long maxcyc = 0, cycles = 0;
-    std::vector<uint8_t> uin; bool useu = false;
+    std::vector<uint8_t> uin; bool useu = false; long long quietmax = 30000000;
     for (int a = 1; a + 1 < argc; a += 2) {
         if (!strcmp(argv[a], "-u")) {
             FILE *f = fopen(argv[a + 1], "rb"); int c; useu = true;
@@ -24,6 +25,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-N")) { nm_nodhcp = 1; a--; }
         else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
         else if (!strcmp(argv[a], "-n")) maxcyc = atoll(argv[a + 1]);
+        else if (!strcmp(argv[a], "-q")) quietmax = atoll(argv[a + 1]);
     }
     auto *top = new Vcdc_eth_core(ctx);
     top->UART_RX = 1; top->DIP = nm_dip; top->BTN = 0; top->pcspma_status = 0x0303;
@@ -57,7 +59,7 @@ int main(int argc, char **argv)
                 else { putchar(rbyte); fflush(stdout); rbit = -1; quiet = 0; }
             }
             quiet++;
-            if (upos >= uin.size() && ubit < 0 && quiet > 30000000) break;
+            if (upos >= uin.size() && ubit < 0 && quiet > quietmax) break;
         }
         // board -> server
         if (top->tx_axis_tvalid && top->tx_axis_tready) {

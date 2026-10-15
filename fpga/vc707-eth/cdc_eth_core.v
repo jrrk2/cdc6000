@@ -9,6 +9,12 @@
 //   0x1003 w length: send the TX window   0x1004 rw LEDs   0x1005 w console byte (UART)   0x1006 r milliseconds
 //   0x1008 r console input: 256 + byte, and the byte is taken from a 64 byte FIFO; 0 when it is empty
 //   0x1009 r DIP switches   0x100a r free running clock cycle count (32 bits)   0x100b r push buttons
+//   0x100c w ramdisk byte address, r its size in KB (0: no ramdisk)   0x100d rw the byte at that address, then the address + 1
+//
+// The ramdisk (cdc_disk_bram, gendisk.py: block RAM holding a small file system with the compiler's files) takes the
+// network out of a compile: see nfs/README.md.  Its read data is two clocks behind its address; the core's accesses
+// are at least four clocks apart (D_ACK, D_DROP, dev_cool), so the byte of the address written or stepped by the
+// previous access is always there.
 //
 // The memory of the core is initialised from mem.hex (runtime + program + NFS driver: see mkmem.py).
 `default_nettype none
@@ -122,6 +128,14 @@ module cdc_eth_core #(
 	end
 	reg [31:0] cyc;
 	always @(posedge clk_sys) cyc <= resetn ? cyc + 32'd1 : 32'd0;
+
+	// ─── the ramdisk: 0x100c address (read: size), 0x100d the byte there, stepping the address ───
+	reg  [19:0] disk_addr;
+	reg         disk_we;
+	reg  [7:0]  disk_wdata;
+	wire [7:0]  disk_q;
+	wire [15:0] disk_kb;
+	cdc_disk_bram disk (.clk(clk_sys), .we(disk_we), .addr(disk_addr), .din(disk_wdata), .dout(disk_q), .size_kb(disk_kb));
 	reg  uart_we;
 	reg  [7:0] uart_byte;
 	simpleuart #(.DEFAULT_DIV(CLK_HZ / BAUD)) uart (
@@ -180,7 +194,7 @@ module cdc_eth_core #(
 	end endgenerate
 
 	// ─── the device bus ──────────────────────────────────────────────────
-	localparam [2:0] D_IDLE = 3'd0, D_PKT = 3'd1, D_ACK = 3'd2, D_DROP = 3'd3, D_UART = 3'd4;
+	localparam [2:0] D_IDLE = 3'd0, D_PKT = 3'd1, D_ACK = 3'd2, D_DROP = 3'd3, D_UART = 3'd4, D_DISKW = 3'd5;
 	reg [2:0] dstate;
 	reg [1:0] dlane;
 	reg [7:0] leds;
@@ -194,7 +208,8 @@ module cdc_eth_core #(
 	end
 	always @(posedge clk_sys) begin
 		dev_ack <= 1'b0; rx_ack <= 1'b0; tx_start <= 1'b0; rxf_pop <= 1'b0;
-		if (!resetn) begin dstate <= D_IDLE; leds <= 8'd0; tx_len <= 11'd0; uart_we <= 1'b0; end
+		disk_we <= 1'b0;
+		if (!resetn) begin dstate <= D_IDLE; leds <= 8'd0; tx_len <= 11'd0; uart_we <= 1'b0; disk_addr <= 20'd0; end
 		else case (dstate)
 			D_IDLE: if (dev_req) begin
 				dlane <= dev_off[1:0];
@@ -207,9 +222,11 @@ module cdc_eth_core #(
 						13'h1003: begin tx_len <= dev_wdata[10:0]; tx_start <= 1'b1; end
 						13'h1004: leds <= dev_wdata[7:0];
 						13'h1005: begin uart_byte <= dev_wdata[7:0]; uart_we <= 1'b1; dstate <= D_UART; end
+						13'h100c: disk_addr <= dev_wdata[19:0];
+						13'h100d: begin disk_wdata <= dev_wdata[7:0]; disk_we <= 1'b1; dstate <= D_DISKW; end
 						default: ;
 					endcase
-					if (dev_off != 13'h1005) begin dev_ack <= 1'b1; dstate <= D_ACK; end
+					if (dev_off != 13'h1005 && dev_off != 13'h100d) begin dev_ack <= 1'b1; dstate <= D_ACK; end
 				end else begin
 					case (dev_off)
 						13'h1000: dev_rdata <= {57'd0, rx_trunc, tx_busy, rx_valid};
@@ -223,6 +240,8 @@ module cdc_eth_core #(
 						13'h100a: dev_rdata <= {28'd0, cyc};
 						13'h1009: dev_rdata <= {52'd0, dip_s2};
 						13'h100b: dev_rdata <= {55'd0, btn_s2};
+						13'h100c: dev_rdata <= {44'd0, disk_kb};
+						13'h100d: begin dev_rdata <= {52'd0, disk_q}; disk_addr <= disk_addr + 20'd1; end
 						default:  dev_rdata <= 60'd0;
 					endcase
 					dev_ack <= 1'b1; dstate <= D_ACK;
@@ -233,6 +252,7 @@ module cdc_eth_core #(
 				dev_ack <= 1'b1; dstate <= D_ACK;
 			end
 			D_UART: if (!uart_wait) begin uart_we <= 1'b0; dev_ack <= 1'b1; dstate <= D_ACK; end
+			D_DISKW: begin disk_addr <= disk_addr + 20'd1; dev_ack <= 1'b1; dstate <= D_ACK; end   // the byte was written this clock
 			D_ACK: dstate <= D_DROP;                       // dev_ack was high this cycle: the core is leaving S_DEV
 			D_DROP: if (!dev_req) dstate <= D_IDLE;
 			default: dstate <= D_IDLE;

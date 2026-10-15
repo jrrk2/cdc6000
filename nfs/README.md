@@ -52,6 +52,21 @@ core: `dir`, `more`/`cat`, `cd`, `pwd`, `copy`, `ren`, `del`, `mkdir`, `rmdir`, 
   byte is only offered after the program has asked a few hundred times in the C models, as a person types slowly.
 
 
+## The ramdisk
+
+An optional block RAM in the FPGA (`fpga/vc707-eth/gendisk.py`, `DISK_KB` in `mkimage_shell.sh`, default 1024 KB in 256
+RAMB36E1) holds a small file system, built with `pascal.pas` (the compiler's source in the 1972 notation) and `pascimg`
+(its image) in it, so that a compile touches no network: `ram` in the shell moves the files there and back, and the shell
+starts there when there is a ramdisk and no network.  Device registers 0x100c (byte address; read: the size in KB, 0
+without a ramdisk) and 0x100d (the byte at the address, which then steps) are all the hardware; the file system is in the
+driver (`nfslib.pas`, `RD*`): blocks of 1024 bytes, block 0 the entries (name of at most ten characters, first block,
+length, deleted), blocks 1-2 the chain of each file (the compiler writes its three outputs at once, so a file is a chain of
+blocks), the rest data.  Blocks are only ever taken from the free end: a file written again gets new blocks and the old
+entry is marked deleted; `compile` on the ramdisk first puts the entries and the free pointer back to what the build put
+in (the built-in files only), as does `ram reset`, so every compile starts from the same state.  On the ramdisk `dir`,
+`more`, `stat`, `del`, `compile`, `run` and `edit` work; `cd`, `copy`, `ren`, `mkdir`, `rmdir` and `df` do not.  Without a
+ramdisk in the build (`DISK_KB=0`) the shell says so.
+
 ## DHCP
 
 At start-up (and for the shell's `net` command) the driver asks for an address (DISCOVER, OFFER, REQUEST, ACK; host name

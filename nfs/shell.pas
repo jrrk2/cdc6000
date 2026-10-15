@@ -309,20 +309,71 @@ BEGIN
    END
 END;
 
+(* ---------------------------------------------------------------- the ramdisk in the shell *)
+PROCEDURE RDDIR;                               (* the live entries: size and name; then the free space *)
+VAR E, N, K, C : INTEGER;
+BEGIN
+   N := RDGET2(2);  LINES := 0;  QUIT := 0;
+   FOR E := 0 TO N - 1 DO
+      IF (RDGET(16 + 16*E + 15) = 0) AND (QUIT = 0) THEN
+      BEGIN
+         PUTCH(45);  SAYR(RDGET3(16 + 16*E + 12), 11);  PUTCH(32);
+         REG[12] := 16 + 16*E;
+         FOR K := 0 TO 9 DO BEGIN C := REG[13];  IF C <> 0 THEN PUTCH(C) END;
+         ENDLINE
+      END;
+   SAY('ramdisk: ');  SAYN(RDGET2(6) - RDGET2(4));  SAY(' of ');  SAYN(RDGET2(6));  SAY(' KB free\n')
+END;
+
+PROCEDURE RAMNAME(T : INTEGER);                (* word T of the line as the file name NM (eleven: too long, found nowhere) *)
+VAR K : INTEGER;
+BEGIN
+   NMN := TL[T];  IF NMN > 10 THEN NMN := 11;
+   FOR K := 0 TO NMN - 1 DO NM[K] := LINE[TS[T] + K];
+   RESOK := 1
+END;
+
+PROCEDURE RDDEL;
+VAR E : INTEGER;
+BEGIN
+   IF NT < 2 THEN SAY('usage: del file\n')
+   ELSE
+   BEGIN
+      RAMNAME(1);  E := RDFIND(0);
+      IF E < 0 THEN SAY('no such file\n') ELSE RDPUT(16 + 16*E + 15, 1)
+   END
+END;
+
+PROCEDURE DORAM;                               (* ram: to and from the ramdisk; ram reset: the built-in files only *)
+BEGIN
+   IF NOT RDOK THEN SAY('no ramdisk in this build\n')
+   ELSE IF (NT >= 2) AND (LINE[TS[1]] = 114) THEN BEGIN CLOSEALL;  RDRESET;  SAY('ramdisk reset to the built-in files\n') END
+   ELSE
+   BEGIN
+      CLOSEALL;  RAMMODE := NOT RAMMODE;
+      IF RAMMODE THEN SAY('ramdisk on: the files are block RAM in the FPGA, a compile touches no network (ram: back to NFS)\n')
+      ELSE SAY('ramdisk off: the files are on the NFS server\n')
+   END
+END;
+
 PROCEDURE DODIRCMD;
 VAR F : BYTES;  FN : INTEGER;  OK : BOOLEAN;
 BEGIN
    PAGED := 1;
    OK := TRUE;
-   IF NT < 2 THEN COPYFH(DIRFH, DIRL, CWDFH, CWDL)
+   IF RAMMODE THEN RDDIR
    ELSE
    BEGIN
-      RESOLVE(TS[1], TL[1]);
-      OK := RESOK = 1;
-      IF OK THEN
-         IF NMN > 0 THEN BEGIN OK := LOOKUPFH(F, FN);  IF OK THEN COPYFH(DIRFH, DIRL, F, FN) END
-   END;
-   IF OK THEN DODIR ELSE SAY('no such directory\n')
+      IF NT < 2 THEN COPYFH(DIRFH, DIRL, CWDFH, CWDL)
+      ELSE
+      BEGIN
+         RESOLVE(TS[1], TL[1]);
+         OK := RESOK = 1;
+         IF OK THEN
+            IF NMN > 0 THEN BEGIN OK := LOOKUPFH(F, FN);  IF OK THEN COPYFH(DIRFH, DIRL, F, FN) END
+      END;
+      IF OK THEN DODIR ELSE SAY('no such directory\n')
+   END
 END;
 
 (* ---------------------------------------------------------------- more *)
@@ -337,7 +388,7 @@ BEGIN
    IF NT < 2 THEN SAY('usage: more file\n')
    ELSE
    BEGIN
-      RESOLVE(TS[1], TL[1]);
+      IF RAMMODE THEN RAMNAME(1) ELSE RESOLVE(TS[1], TL[1]);
       OPENSLOT(3);
       IF (RESOK = 1) AND (NMN > 0) AND LOOKUP(3) THEN
       BEGIN
@@ -367,9 +418,15 @@ END;
 
 (* ---------------------------------------------------------------- the file utilities *)
 PROCEDURE DOSTAT;
-VAR F : BYTES;  FN, N, TY, SZ, MT, MODE : INTEGER;
+VAR F : BYTES;  FN, N, TY, SZ, MT, MODE, E : INTEGER;
 BEGIN
    IF NT < 2 THEN SAY('usage: stat file\n')
+   ELSE IF RAMMODE THEN
+   BEGIN
+      RAMNAME(1);  E := RDFIND(0);
+      IF E < 0 THEN SAY('no such file\n')
+      ELSE BEGIN SAY('size ');  SAYN(RDGET3(16 + 16*E + 12));  SAY('  first block ');  SAYN(RDGET2(16 + 16*E + 10));  CRLF END
+   END
    ELSE
    BEGIN
       RESOLVE(TS[1], TL[1]);
@@ -547,15 +604,16 @@ BEGIN
    COPYFH(DIRFH, DIRL, CWDFH, CWDL);
    IF BASEN > 0 THEN SETNMBASE(112, 97, 115)
    ELSE BEGIN NM[0] := 105;  NM[1] := 110;  NM[2] := 112;  NM[3] := 117;  NM[4] := 116;  NMN := 5 END;
-   IF NOT LOOKUPFH(F, FN) THEN SAY('no such source file\n')
+   IF RAMMODE THEN BEGIN RDRESET;  OK := RDFIND(0) >= 0 END     (* the ramdisk: back to the built-in files, then the source *)
+   ELSE OK := LOOKUPFH(F, FN);
+   IF NOT OK THEN SAY('no such source file\n')
    ELSE
    BEGIN
-      OK := TRUE;
       IF (NCOMP > 0) OR (EDITED = 1) THEN
-      BEGIN                                    (* the compiler is reloaded from pascimg in the export *)
+      BEGIN                                    (* the compiler is reloaded from pascimg in the export (or on the ramdisk) *)
          COPYFH(DIRFH, DIRL, FHROOT, FHROOTL);
          NM[0] := 112;  NM[1] := 97;  NM[2] := 115;  NM[3] := 99;  NM[4] := 105;  NM[5] := 109;  NM[6] := 103;  NMN := 7;
-         OK := LOOKUPFH(F, FN)
+         IF RAMMODE THEN OK := RDFIND(0) >= 0 ELSE OK := LOOKUPFH(F, FN)
       END;
       IF OK THEN
       BEGIN
@@ -649,6 +707,8 @@ BEGIN
    SAY('run [n]            run the program compile has just made (screen and keyboard are its output and input);\n');
    SAY('                   run 2048 for the compiler itself: n goes into the cell its listing starts from\n');
    SAY('copy a b, ren a b, del f, mkdir d, rmdir d, stat f, df\n');
+   SAY('ram                files on the ramdisk in the FPGA instead of NFS, and back (a compile there starts from\n');
+   SAY('                   the built-in files: pascal.pas, pascimg); ram reset: those files only\n');
    SAY('info               addresses and the export; net: reconnect; halt\n')
 END;
 
@@ -659,7 +719,12 @@ BEGIN
    CRLF;
    IF DHST = 1 THEN BEGIN SAY('dhcp: address from the server ');  SAYIP(SIDB);  SAY(', lease ');  SAYN(LEASE);  SAY(' s\n') END
    ELSE IF DHST = 2 THEN SAY('dhcp: no answer, using the static address\n')
-   ELSE SAY('static address (DIP switch 7)\n')
+   ELSE SAY('static address (DIP switch 7)\n');
+   IF RDOK THEN
+   BEGIN
+      SAY('ramdisk ');  SAYN(REG[12]);  SAY(' KB, ');
+      IF RAMMODE THEN SAY('in use (ram: back to NFS)\n') ELSE SAY('off (ram: use it)\n')
+   END
 END;
 
 PROCEDURE DOBENCH;                             (* an integer benchmark: sieve of Eratosthenes 20 times, then a loop of divisions *)
@@ -690,7 +755,7 @@ VAR K, IDX : INTEGER;
 BEGIN
    MAKECMD;
    IDX := -1;
-   FOR K := 0 TO 24 DO IF CMDS[K] = CMDW THEN IDX := K;
+   FOR K := 0 TO 25 DO IF CMDS[K] = CMDW THEN IDX := K;
    IF (IDX = 1) THEN IDX := 0
    ELSE IF IDX = 3 THEN IDX := 2
    ELSE IF IDX = 9 THEN IDX := 8
@@ -698,7 +763,10 @@ BEGIN
    ELSE IF IDX = 13 THEN IDX := 12;
    PAGED := 0;
    IF IDX < 0 THEN SAY('unknown command, try help\n')
-   ELSE IF NOT NETOK AND (IDX <> 18) AND (IDX <> 19) AND (IDX <> 20) AND (IDX <> 21) AND (IDX <> 6) THEN SAY('no network: type net\n')
+   ELSE IF NOT NETOK AND NOT RAMMODE AND (IDX <> 18) AND (IDX <> 19) AND (IDX <> 20) AND (IDX <> 21) AND (IDX <> 6)
+      AND (IDX <> 24) AND (IDX <> 25) THEN SAY('no network: type net\n')
+   ELSE IF RAMMODE AND ((IDX = 5) OR (IDX = 8) OR (IDX = 12) OR (IDX = 14) OR (IDX = 15) OR (IDX = 17)) THEN
+      SAY('not on the ramdisk (ram: back to NFS)\n')
    ELSE
    CASE IDX OF
       0: DODIRCMD;
@@ -708,7 +776,7 @@ BEGIN
       6: DOPWD;
       7: DOCOMPILE;
       8: DOCOPY;
-      10: DOSIMPLE(12);
+      10: IF RAMMODE THEN RDDEL ELSE DOSIMPLE(12);
       12: DOREN;
       14: DOSIMPLE(9);
       15: DOSIMPLE(13);
@@ -720,7 +788,8 @@ BEGIN
       21: BEGIN MB.RES := 2;  LEAVE := 1 END;
       22: DORUN;
       23: DOEDIT;
-      24: DOBENCH
+      24: DOBENCH;
+      25: DORAM
    END
 END;
 
@@ -731,7 +800,8 @@ BEGIN
    CMDS[8] := 'COPY      ';  CMDS[9] := 'CP        ';  CMDS[10] := 'DEL       ';  CMDS[11] := 'RM        ';
    CMDS[12] := 'REN       ';  CMDS[13] := 'MV        ';  CMDS[14] := 'MKDIR     ';  CMDS[15] := 'RMDIR     ';
    CMDS[16] := 'STAT      ';  CMDS[17] := 'DF        ';  CMDS[18] := 'HELP      ';  CMDS[19] := 'INFO      ';
-   CMDS[20] := 'NET       ';  CMDS[21] := 'HALT      ';  CMDS[22] := 'RUN       ';  CMDS[23] := 'EDIT      ';  CMDS[24] := 'BENCH     '
+   CMDS[20] := 'NET       ';  CMDS[21] := 'HALT      ';  CMDS[22] := 'RUN       ';  CMDS[23] := 'EDIT      ';  CMDS[24] := 'BENCH     ';
+   CMDS[25] := 'RAM       '
 END;
 
 PROCEDURE SHELL;

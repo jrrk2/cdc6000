@@ -1,6 +1,7 @@
 #!/bin/sh
 # mkimage_shell.sh dir : the memory image of the board in shell mode -- the run time (boots into the shell), the Pascal compiler
-# (started by `compile`) and the NFS driver with the shell -- as mem.hex, cdc_ram_bram.v and cdc_ram_bram.init.tcl in dir.
+# (started by `compile`) and the NFS driver with the shell -- as mem.hex, cdc_ram_bram.v and cdc_ram_bram.init.tcl in dir;
+# and the ramdisk (DISK_KB, default 1024 KB) with pascal.pas and pascimg as cdc_disk_bram.v and disk.hex.
 # The export on the server needs a file pascimg (written to dir too: the compiler image the run time reloads for a second compile).
 set -e
 cd "$(dirname "$0")/../.."
@@ -29,4 +30,7 @@ with open(d + '/mem.hex', 'w') as o:
         o.write('%015x\n' % m[a]); nxt = a + 1
 PY
 python3 fpga/vc707-eth/genmem.py "$1/cdc_ram_bram.v" host/runtime_shell.img nfs/build/compiler_shell.img nfs/build/drv.img
+# the ramdisk (DISK_KB kilobytes, default 1024; 0: none): the compiler's source in the 1972 notation and its image
+python3 host/tocdc.py ocr/pascal.pas > "$1/pascal.pas"
+python3 fpga/vc707-eth/gendisk.py "$1/cdc_disk_bram.v" "$1/disk.hex" "${DISK_KB:-1024}" "pascal.pas=$1/pascal.pas" "pascimg=$1/pascimg"
 wc -l "$1/mem.hex"

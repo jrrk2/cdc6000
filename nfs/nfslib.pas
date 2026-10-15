@@ -74,6 +74,8 @@ VAR MEM : ARRAY [0..38911] OF INTEGER;     (* absolute memory 2048 .. 40959, the
    YI, SIDB, DXB, MASK, GATE : ARRAY4;  DHST, LEASE : INTEGER;     (* DHCP: address offered, server, transaction, mask, router; 0 not tried 1 bound 2 failed *)
    EXPN : INTEGER;
    EXPORT : ARRAY [0..31] OF INTEGER;
+   RDOK, RAMMODE : BOOLEAN;                (* the ramdisk (REG[12], REG[13]): there is one; files are on it, not on NFS *)
+   SENT, SBLK, SLEN : ARRAY [0..3] OF INTEGER;   (* a slot's file on the ramdisk: entry; next block read / last block written; length *)
 VALUE (*TXTV*)
    MYMAC = (2, 0, 0, 67, 68, 67);
    MYIP = (192, 168, 1, 77);
@@ -323,15 +325,147 @@ BEGIN
    LOOKUPFH := OK
 END;
 
+(* ---------------------------------------------------------------- the ramdisk: block RAM in the FPGA holding a small file system
+   (fpga/vc707-eth/gendisk.py has the layout: 1024 byte blocks, block 0 the entries, blocks 1-2 the chain of each file).
+   REG[12] is the byte address (read: the size in KB, 0 without a ramdisk), REG[13] the byte there, and the address steps. *)
+FUNCTION RDGET(A : INTEGER) : INTEGER;
+BEGIN REG[12] := A;  RDGET := REG[13] END;
+
+PROCEDURE RDPUT(A, B : INTEGER);
+BEGIN REG[12] := A;  REG[13] := B END;
+
+FUNCTION RDGET2(A : INTEGER) : INTEGER;       (* 16 bits, little end *)
+VAR L : INTEGER;
+BEGIN REG[12] := A;  L := REG[13];  RDGET2 := L + REG[13] * 256 END;
+
+PROCEDURE RDPUT2(A, V : INTEGER);
+BEGIN REG[12] := A;  REG[13] := V MOD 256;  REG[13] := V DIV 256 END;
+
+FUNCTION RDGET3(A : INTEGER) : INTEGER;       (* 24 bits *)
+VAR L, M : INTEGER;
+BEGIN REG[12] := A;  L := REG[13];  M := REG[13];  RDGET3 := L + M * 256 + REG[13] * 65536 END;
+
+PROCEDURE RDPUT3(A, V : INTEGER);
+BEGIN REG[12] := A;  REG[13] := V MOD 256;  REG[13] := V DIV 256 MOD 256;  REG[13] := V DIV 65536 END;
+
+(* the newest live entry named NM (ten characters at most): its number, or -1 *)
+FUNCTION RDFIND(D : INTEGER) : INTEGER;
+VAR E, K, C, R, M : INTEGER;
+BEGIN
+   R := -1;
+   IF (NMN > 0) AND (NMN <= 10) THEN
+   BEGIN
+      E := RDGET2(2) - 1;
+      WHILE (E >= 0) AND (R < 0) DO
+      BEGIN
+         IF RDGET(16 + 16*E + 15) = 0 THEN
+         BEGIN
+            M := 1;  REG[12] := 16 + 16*E;
+            FOR K := 0 TO 9 DO
+            BEGIN
+               C := REG[13];
+               IF K < NMN THEN BEGIN IF C <> NM[K] THEN M := 0 END
+               ELSE IF C <> 0 THEN M := 0
+            END;
+            IF M = 1 THEN R := E
+         END;
+         E := E - 1
+      END
+   END;
+   RDFIND := R
+END;
+
+FUNCTION RDLOOKUP(S : INTEGER) : BOOLEAN;
+VAR E : INTEGER;
+BEGIN
+   E := RDFIND(0);
+   IF E >= 0 THEN BEGIN SENT[S] := E;  SBLK[S] := RDGET2(16 + 16*E + 10);  SLEN[S] := RDGET3(16 + 16*E + 12) END;
+   RDLOOKUP := E >= 0
+END;
+
+(* a new entry named NM; an older file of the name is marked deleted (its blocks stay until a reset) *)
+FUNCTION RDCREATE(S : INTEGER) : BOOLEAN;
+VAR E, N, K : INTEGER;  OK : BOOLEAN;
+BEGIN
+   N := RDGET2(2);
+   OK := (N < 63) AND (NMN > 0) AND (NMN <= 10);
+   IF OK THEN
+   BEGIN
+      E := RDFIND(0);
+      IF E >= 0 THEN RDPUT(16 + 16*E + 15, 1);
+      REG[12] := 16 + 16*N;
+      FOR K := 0 TO 9 DO IF K < NMN THEN REG[13] := NM[K] ELSE REG[13] := 0;
+      REG[13] := 255;  REG[13] := 255;                          (* no block yet *)
+      REG[13] := 0;  REG[13] := 0;  REG[13] := 0;  REG[13] := 0;    (* length 0, live *)
+      RDPUT2(2, N + 1);
+      SENT[S] := N;  SBLK[S] := 65535;  SLEN[S] := 0
+   END;
+   RDCREATE := OK
+END;
+
+(* the next piece of slot S into its buffer: the next block of the file *)
+FUNCTION RDREAD(S : INTEGER) : BOOLEAN;
+VAR N, K, B : INTEGER;
+BEGIN
+   N := SLEN[S] - SOFF[S];
+   IF N > CHUNK THEN N := CHUNK;
+   B := SBLK[S];
+   IF (N <= 0) OR (B = 65535) THEN BEGIN N := 0;  SEOF[S] := TRUE END
+   ELSE
+   BEGIN
+      REG[12] := B * CHUNK;
+      FOR K := 0 TO N - 1 DO SBUF[S*CHUNK+K] := REG[13];
+      SBLK[S] := RDGET2(CHUNK + 2*B)
+   END;
+   SN[S] := N;  SP[S] := 0;  SOFF[S] := SOFF[S] + N;
+   RDREAD := TRUE
+END;
+
+(* slot S's buffer into a block taken from the free end, chained after the file's last one *)
+FUNCTION RDWRITE(S : INTEGER) : BOOLEAN;
+VAR B, K, E : INTEGER;  OK : BOOLEAN;
+BEGIN
+   OK := TRUE;
+   IF SN[S] > 0 THEN
+   BEGIN
+      B := RDGET2(4);
+      OK := B < RDGET2(6);
+      IF OK THEN
+      BEGIN
+         RDPUT2(4, B + 1);
+         RDPUT2(CHUNK + 2*B, 65535);
+         E := SENT[S];
+         IF SBLK[S] = 65535 THEN RDPUT2(16 + 16*E + 10, B) ELSE RDPUT2(CHUNK + 2*SBLK[S], B);
+         SBLK[S] := B;
+         REG[12] := B * CHUNK;
+         FOR K := 0 TO SN[S] - 1 DO REG[13] := SBUF[S*CHUNK+K];
+         SOFF[S] := SOFF[S] + SN[S];  SLEN[S] := SOFF[S];  SN[S] := 0;
+         RDPUT3(16 + 16*E + 12, SLEN[S])
+      END
+      ELSE FAIL(70)
+   END;
+   RDWRITE := OK
+END;
+
+(* the entries and the free pointer back to what the build put in: the built-in files only, nothing written since *)
+PROCEDURE RDRESET;
+VAR N, E : INTEGER;
+BEGIN
+   N := RDGET2(8);
+   RDPUT2(2, N);  RDPUT2(4, RDGET2(10));
+   FOR E := 0 TO N - 1 DO RDPUT(16 + 16*E + 15, 0)
+END;
+
+(* ---------------------------------------------------------------- the files: NFS, or the ramdisk when RAMMODE *)
 FUNCTION LOOKUP(S : INTEGER) : BOOLEAN;
 VAR OK : BOOLEAN;  F : BYTES;  N : INTEGER;
 BEGIN
-   OK := LOOKUPFH(F, N);
-   IF OK THEN SAVEFH(S, F, N);
+   IF RAMMODE THEN OK := RDLOOKUP(S)
+   ELSE BEGIN OK := LOOKUPFH(F, N);  IF OK THEN SAVEFH(S, F, N) END;
    LOOKUP := OK
 END;
 
-FUNCTION CREATE(S : INTEGER) : BOOLEAN;      (* UNCHECKED: an existing file is truncated *)
+FUNCTION NCREATE(S : INTEGER) : BOOLEAN;     (* UNCHECKED: an existing file is truncated *)
 VAR OK : BOOLEAN;  F : BYTES;  N : INTEGER;
 BEGIN
    OK := FALSE;
@@ -348,14 +482,17 @@ BEGIN
          IF GET32(0) <> 0 THEN BEGIN TAKEFH(F, N);  IF N > 0 THEN BEGIN SAVEFH(S, F, N);  OK := TRUE END END;
       RELEASE
    END;
-   CREATE := OK
+   NCREATE := OK
 END;
+
+FUNCTION CREATE(S : INTEGER) : BOOLEAN;
+BEGIN IF RAMMODE THEN CREATE := RDCREATE(S) ELSE CREATE := NCREATE(S) END;
 
 PROCEDURE SKIPATTR;
 BEGIN IF GET32(0) = 1 THEN RP := RP + 84 END;
 
 (* read the next piece of slot S into its buffer *)
-FUNCTION READPIECE(S : INTEGER) : BOOLEAN;
+FUNCTION NREADPIECE(S : INTEGER) : BOOLEAN;
 VAR OK : BOOLEAN;  F : BYTES;  N, K, EOFF : INTEGER;
 BEGIN
    OK := FALSE;
@@ -380,11 +517,14 @@ BEGIN
       END;
       RELEASE
    END;
-   READPIECE := OK
+   NREADPIECE := OK
 END;
 
+FUNCTION READPIECE(S : INTEGER) : BOOLEAN;
+BEGIN IF RAMMODE THEN READPIECE := RDREAD(S) ELSE READPIECE := NREADPIECE(S) END;
+
 (* write slot S's buffer *)
-FUNCTION WRITEPIECE(S : INTEGER) : BOOLEAN;
+FUNCTION NWRITEPIECE(S : INTEGER) : BOOLEAN;
 VAR OK : BOOLEAN;  F : BYTES;  K, N : INTEGER;
 BEGIN
    OK := TRUE;
@@ -409,8 +549,11 @@ BEGIN
          RELEASE
       END
    END;
-   WRITEPIECE := OK
+   NWRITEPIECE := OK
 END;
+
+FUNCTION WRITEPIECE(S : INTEGER) : BOOLEAN;
+BEGIN IF RAMMODE THEN WRITEPIECE := RDWRITE(S) ELSE WRITEPIECE := NWRITEPIECE(S) END;
 
 (* let go of every file: a file that was written is flushed first *)
 PROCEDURE CLOSEALL;

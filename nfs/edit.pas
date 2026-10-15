@@ -308,7 +308,7 @@ BEGIN
    IF NT < 2 THEN SAY('usage: edit file\n')
    ELSE
    BEGIN
-      RESOLVE(TS[1], TL[1]);
+      IF RAMMODE THEN RAMNAME(1) ELSE RESOLVE(TS[1], TL[1]);
       IF (RESOK = 0) OR (NMN = 0) THEN SAY('no such directory\n')
       ELSE
       BEGIN
