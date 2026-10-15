@@ -18,7 +18,7 @@ NFS server, reached over UDP through the board's Ethernet.  Nothing of this is i
 * Files are named by their lower-case LFN in the export root: INPUT is `input`, OUTPUT `output`, PASCLGO `pasclgo`,
   PMDFILE `pmdfile`.  Input is the 1972 character set as UTF-8 text (the glyphs of `host/pascal.cdc`), converted to display
   code by the driver; output characters go back as ASCII; binary words as 20 octal digits and a line end.
-* Addresses, the server (192.168.1.109 unless DIP switches 0-6 give a host number; export /srv/nfs/vc707/cdc) and the board (192.168.1.77, 02:00:00:43:44:43) are
+* Addresses, the server (192.168.1.106 unless DIP switches 0-6 give a host number; export /srv/nfs/vc707/cdc) and the board (192.168.1.77, 02:00:00:43:44:43) are
   constants at the top of `nfslib.pas`; no DHCP.
 
 ## Testing
@@ -57,7 +57,7 @@ core: `dir`, `more`/`cat`, `cd`, `pwd`, `copy`, `ren`, `del`, `mkdir`, `rmdir`, 
 At start-up (and for the shell's `net` command) the driver asks for an address (DISCOVER, OFFER, REQUEST, ACK; host name
 `cdc6000`) and waits three seconds for each answer, five times; if nobody answers it keeps the static address of the VALUE
 section of `nfslib.pas` (192.168.1.77).  **DIP switch 7 up** skips DHCP and uses the static address.  The server is not taken from
-DHCP: its host number is the value of **DIP switches 0-6** (0: the default of the VALUE section, 109) on the network of the
+DHCP: its host number is the value of **DIP switches 0-6** (0: the default of the VALUE section, 106) on the network of the
 address the board was given (the first three bytes of it).  `info` in the shell says which it is.  The lease is not renewed (a run
 is short).  The model (`netmodel.h`) answers DHCP with 192.168.1.178; `-D n` gives the DIP switches and `-N` (before
 another option) takes the DHCP server away, in `host/cdcemu`, the Verilated core and the board-level simulation.
@@ -85,5 +85,5 @@ openFPGALoader --cable digilent --freq 15000000 IMGDIR/vc707_cdc_eth.bit
 picocom -b 115200 /dev/ttyUSB2
 ```
 
-The board is 192.168.1.77 (static; DHCP otherwise) and DIP switches 0-6 give the server's host number (0: 192.168.1.109);
+The board is 192.168.1.77 (static; DHCP otherwise) and DIP switches 0-6 give the server's host number (0: 192.168.1.106);
 DIP switch 7 up selects the static address.

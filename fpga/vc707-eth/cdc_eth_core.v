@@ -217,7 +217,9 @@ module cdc_eth_core #(
 						13'h1002: dev_rdata <= {49'd0, rx_len};
 						13'h1004: dev_rdata <= {52'd0, leds};
 						13'h1006: dev_rdata <= {30'd0, ms_count};
-						13'h1008: begin dev_rdata <= rxf_empty ? 60'd0 : {51'd0, 1'b1, rxf[rxf_rd[5:0]]}; rxf_pop <= 1'b1; end
+						// pop only what is read now: a byte pushed in this very cycle is not in dev_rdata, and an unconditional pop
+						// the next cycle would discard it (it did: about one byte in 25 typed into the shell was lost)
+						13'h1008: begin dev_rdata <= rxf_empty ? 60'd0 : {51'd0, 1'b1, rxf[rxf_rd[5:0]]}; rxf_pop <= !rxf_empty; end
 						13'h100a: dev_rdata <= {28'd0, cyc};
 						13'h1009: dev_rdata <= {52'd0, dip_s2};
 						13'h100b: dev_rdata <= {55'd0, btn_s2};

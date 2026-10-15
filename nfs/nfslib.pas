@@ -77,7 +77,7 @@ VAR MEM : ARRAY [0..38911] OF INTEGER;     (* absolute memory 2048 .. 40959, the
 VALUE (*TXTV*)
    MYMAC = (2, 0, 0, 67, 68, 67);
    MYIP = (192, 168, 1, 77);
-   SRVIP = (192, 168, 1, 109);
+   SRVIP = (192, 168, 1, 106);
    EXPN = 18;
    EXPORT = (47, 115, 114, 118, 47, 110, 102, 115, 47, 118, 99, 55, 48, 55, 47, 99, 100, 99);   (* /srv/nfs/vc707/cdc *)
 
