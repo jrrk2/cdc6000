@@ -249,7 +249,7 @@ the xc7-bitstream-tools fork, Project X-Ray), `--placer-heap-timingweight 60`, h
 | scoreboarded, in-order | open flow | 50 MHz | 63.8 MHz, no hold violations | 0.65 s at 65 MHz | 58 |
 | dual issue, speculative, first fix | Vivado | 59.7 MHz | closes (WNS +0.30 ns) | 26.3 M cycles, 0.44 s | 85 |
 | dual issue, speculative, both fixes, speed set | Vivado | 95.2 MHz | closes (WNS +0.02 ns) | 26.3 M cycles, 0.28 s | 136 |
-| dual issue, speculative, both fixes, speed set | Vivado | 100 MHz | WNS -0.20 ns (best of four placements) | | |
+| dual issue, speculative, both fixes, speed set, overconstrained placement | Vivado | 100 MHz | closes (WNS 0.000 ns, hold +0.08) | 26.3 M cycles, 0.26 s | 143 |
 | dual issue, speculative | open flow | 35.7 MHz | 40.1 MHz, no hold violations | 0.66 s at 40 MHz | 57 |
 
 Before the fixes below the dual-issue core bought per-clock work and gave it back in clock: on both flows it ran the
@@ -268,6 +268,21 @@ two-slot decode into the decode register (17 levels, 76 % routing).  Taking it o
 (MEMLAT = 2) makes the self-compile 30.6 M cycles (+16.5 %), decoding fetched words only from the stack a cycle later about
 +10 % (2.8 M stack misses), a registered branch decision 28.2 M (+7.1 %) for 0.06 ns -- each of them a net loss against
 95 MHz, so the core stays as it is.
+
+The last 0.2 ns came from the tools, not the RTL (2026-10-15).  From the same synthesised netlist (`out/synth.dcp` of the
+100 MHz build), four re-placements with the system clock overconstrained during placement (`set_clock_uncertainty -setup`
+on `clk_sys_unbuf` for `opt_design`, `place_design` and the post-placement `phys_opt_design`, removed before routing):
+`opt_design ExploreWithRemap`, placement `ExtraTimingOpt` with 0.30 ns of uncertainty and routing `Explore` was the one,
+-0.248 after placement, -0.638 after routing, then post-route `phys_opt_design` passes each gained: `Explore` -0.227,
+`AggressiveExplore` -0.196, `AggressiveFanoutOpt` -0.102, a second `AggressiveFanoutOpt` -0.075 and
+`AlternateFlowWithRetiming` 0.000 -- no failing endpoint, hold +0.084 ns.  The other three (0.30 ns with `opt_design
+Explore`, 0.20 ns with `ExtraNetDelay_low` placement and `AggressiveExplore` routing, 0.50 ns) were worse after routing
+(-0.60, -0.28, -1.04).  The scripts are `fpga/vc707-eth/pr2.tcl` (re-place from `out/synth.dcp` with the overconstraint, then
+the three post-route passes) and `resume2.tcl` (more post-route passes until they stop gaining, `route_design -tns_cleanup`
+between rounds), run from the build directory after `build.tcl` or its synthesis lines; `build.tcl` keeps its single-pass
+flow.  The worst paths at the end are 85 % routing over 17 levels, so the
+margin is the placer's, not the logic's: a different netlist (any RTL change, even in the board glue) needs the chain
+run again and may land either side of zero.
 
 What the open flow loses to Vivado is placement, not mapping: nextpnr's worst path on the in-order core is 5.6 ns of logic in
 25 cells and 9.3 ns of routing in 26 nets, with single hops of 0.7-0.8 ns over 20-34 tiles; Vivado's report of the same cone
