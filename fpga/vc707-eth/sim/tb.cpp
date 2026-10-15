@@ -1,9 +1,10 @@
 // Testbench for cdc_eth_core: the whole board minus the PHY.  The MAC stream is driven with the frames of the server model
 // (nfs/netmodel.h), so the DMA, the packet RAM, the registers and the core run the NFS driver exactly as the board will.
-//   Vcdc_eth_core -r exportdir [-n maxcycles] [-u uartinput] [-q quietcycles]
+//   Vcdc_eth_core -r exportdir [-n maxcycles] [-u uartinput] [-q quietcycles] [-d diskdump]
+//   -d: at the end the ramdisk's bytes are written to diskdump (fpga/vc707-eth/rdextract.py reads its files)
 // The UART is simulated at the bit level (434 clocks a bit, as on the board): -u gives the bytes sent to the board, what the
-// board sends is printed on stdout.  With -u the run ends when the input is used up and the board has been quiet for
-// -q cycles (default 30 million; a compile on the ramdisk is silent for longer).
+// board sends is printed on stdout.  With -u the run ends when the input is used up and the board has sat at the shell's
+// prompt for -q cycles (default 30 million).
 #include "Vcdc_eth_core.h"
 #include "Vcdc_eth_core___024root.h"
 #include "verilated.h"
@@ -15,7 +16,7 @@ int main(int argc, char **argv)
     VerilatedContext *ctx = new VerilatedContext;
     ctx->commandArgs(argc, argv);
     long long maxcyc = 0, cycles = 0;
-    std::vector<uint8_t> uin; bool useu = false; long long quietmax = 30000000;
+    std::vector<uint8_t> uin; bool useu = false; long long quietmax = 30000000; const char *diskdump = 0;
     for (int a = 1; a + 1 < argc; a += 2) {
         if (!strcmp(argv[a], "-u")) {
             FILE *f = fopen(argv[a + 1], "rb"); int c; useu = true;
@@ -26,6 +27,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "-r")) net_root = argv[a + 1];
         else if (!strcmp(argv[a], "-n")) maxcyc = atoll(argv[a + 1]);
         else if (!strcmp(argv[a], "-q")) quietmax = atoll(argv[a + 1]);
+        else if (!strcmp(argv[a], "-d")) diskdump = argv[a + 1];
     }
     auto *top = new Vcdc_eth_core(ctx);
     top->UART_RX = 1; top->DIP = nm_dip; top->BTN = 0; top->pcspma_status = 0x0303;
@@ -41,7 +43,7 @@ int main(int argc, char **argv)
     uint8_t rf[1536]; int rlen = 0, rpos = 0;      // frame being fed to the board
     const int BIT = 434;
     size_t upos = 0; int ubit = -1, ucnt = 0; unsigned ushift = 0;     // transmit to the board: ubit -1 idle, 0 start, 1..8 data, 9 stop
-    int rbit = -1, rcnt = 0; unsigned rbyte = 0; long long quiet = 0;   // receive from the board
+    int rbit = -1, rcnt = 0; unsigned rbyte = 0; long long quiet = 0; unsigned last2 = 0;   // receive from the board; last2: the last two bytes it sent
     while (!top->halted && !(maxcyc && cycles >= maxcyc)) {
         if (useu) {
             if (ubit < 0) {
@@ -56,10 +58,10 @@ int main(int argc, char **argv)
             else if (--rcnt == 0) {
                 rcnt = BIT;
                 if (rbit < 8) rbyte |= top->UART_TX << rbit++;
-                else { putchar(rbyte); fflush(stdout); rbit = -1; quiet = 0; }
+                else { putchar(rbyte); fflush(stdout); rbit = -1; quiet = 0; last2 = (last2 << 8 | rbyte) & 0xffff; }
             }
             quiet++;
-            if (upos >= uin.size() && ubit < 0 && quiet > quietmax) break;
+            if (upos >= uin.size() && ubit < 0 && quiet > quietmax && last2 == ('>' << 8 | ' ')) break;   // idle at the prompt
         }
         // board -> server
         if (top->tx_axis_tvalid && top->tx_axis_tready) {
@@ -77,6 +79,12 @@ int main(int argc, char **argv)
     }
     fprintf(stderr, "[%s after %lld cycles, %ld frames sent, %ld received, fault=%d]\n", top->halted ? "halted" : "cycle limit", cycles,
             nm_frames_tx, nm_frames_rx, top->fault);
+    if (diskdump) {
+        FILE *f = fopen(diskdump, "wb");
+        auto &m = top->rootp->cdc_eth_core__DOT__disk__DOT__mem;
+        for (size_t i = 0; f && i < sizeof(m) / sizeof(m[0]); i++) fputc(m[i], f);
+        if (f) fclose(f);
+    }
     delete top;
     return top ? 0 : 0;
 }

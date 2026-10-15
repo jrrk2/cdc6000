@@ -12,8 +12,11 @@ dir=$(cd "$1" && pwd); core=${2:-seq}; sd=${3:-20.000}; hz=${4:-50000000}
 here=$(cd "$(dirname "$0")" && pwd); repo=$here/../..
 XT=${XT:-$HOME/xc7-bitstream-tools}
 YOSYS=$($XT/scripts/pinned_yosys.sh)
-NEXTPNR=$XT/build/nextpnr-himbaechel
-DB=$XT/.deps/prjxray-db
+# nextpnr and the database it was built over must be the pair the bitstream is assembled against: upstream nextpnr c4dc8713 (with
+# #104, the MMCM-to-BUFG cascade pips) over openXC7 prjxray-db b12466df -- see ~/bytecode/fpga/vc707-ethmin/KNOWN_GOOD_20261014.md.
+# The toolkit's own build (e558304b over 43af59b) placed with one tilegrid and assembled with another; its bitstream did not run.
+NEXTPNR=${NEXTPNR:-$HOME/bytecode-work/nextpnr-main-dbmaster-build/nextpnr-himbaechel}
+DB=${PRJXRAY_DB:-$HOME/bytecode-work/prjxray-db-master}
 NEXTPNR_FLAGS=${NEXTPNR_FLAGS:-"--placer-heap-timingweight 60 --placer-heap-congestion-spread --tmg-ripup -o hold-fix"}
 PART=xc7vx485tffg1761-2
 eth=$repo/fpga/eth-rtl
