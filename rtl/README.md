@@ -47,9 +47,16 @@ the build 0.20 ns short, which runs at the same cycle count as the closed one (t
 Of the compile's 3.3 s about 0.26 s is the compiler itself: the rest is the NFS driver (Pascal, compiled by the same
 compiler) moving the source, the listing and the object through the Ethernet window a byte at a time, and the server's
 round trips.  The compile time over NFS varies with the server (3299 to 4932 ms were seen in one morning); on the ramdisk
-(nfs/README.md: block RAM in the FPGA holding the source and the compiler image, `ram` in the shell) it is **2785 ms at
-95.2 MHz, the same to the millisecond every time**, compiler image reload from the ramdisk included.  The 650 ms
-difference is the network's share; the rest is the run time taking the files from the driver a character a call.
+(nfs/README.md: block RAM in the FPGA holding the source and the compiler image, `ram` in the shell) it is the same to the millisecond every time:
+
+| compile on the ramdisk | 95.2 MHz | 100 MHz |
+|---|---|---|
+| first after boot (the compiler is in memory as loaded) | | 1641 ms |
+| any later one (the run time first reads the compiler image, 353 KB of octal text, back from `pascimg`) | 2785 ms | 2653 ms |
+
+The 100 MHz build (`vivSb13/prF`, WNS +0.010 ns, hold +0.078) is the ramdisk image with the overconstrained placement
+of SUPERSCALAR.md section 11.  Against NFS (3434 ms at 95.2 MHz for a later compile) the ramdisk saves the network's
+650 ms; the image reload is about 1 s of the rest, and the run time takes every file from the driver a character a call.
 
 ## Device bus and the Ethernet board
 Loads and stores to 120000B..+4111 leave the core on `dev_req/dev_we/dev_off/dev_wdata`, `dev_ack/dev_rdata` (state `S_DEV`).
