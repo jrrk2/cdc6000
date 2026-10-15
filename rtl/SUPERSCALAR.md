@@ -251,6 +251,7 @@ the xc7-bitstream-tools fork, Project X-Ray), `--placer-heap-timingweight 60`, h
 | dual issue, speculative, both fixes, speed set | Vivado | 95.2 MHz | closes (WNS +0.02 ns) | 26.3 M cycles, 0.28 s | 136 |
 | dual issue, speculative, both fixes, speed set, overconstrained placement | Vivado | 100 MHz | closes (WNS 0.000 ns, hold +0.08) | 26.3 M cycles, 0.26 s | 143 |
 | dual issue, speculative | open flow | 35.7 MHz | 40.1 MHz, no hold violations | 0.66 s at 40 MHz | 57 |
+| dual issue, speculative, both fixes, with the ramdisk | open flow | 50 MHz | 52.2 MHz, no hold violations | 0.50 s at 52 MHz | 75 |
 
 Before the fixes below the dual-issue core bought per-clock work and gave it back in clock: on both flows it ran the
 self-compile in the time of the in-order core.  With them, Vivado closes 95.2 MHz on the board design, 1.5x the MIPS of the
@@ -291,6 +292,10 @@ has the same depth and about 4 ns of routing.  The upstream `timing_opt` pass wi
 cannot touch the cells the packer clusters (LUT with its flop, LUT6_2 pairs, carry chains), which is most of the path.
 The flag sets compared on the dual-issue netlist: delay matrix with timing weight 100, 32.7 MHz; plus congestion spreading
 and timing-driven rip-up, 40.9 MHz; plus hold fixing, 43.1 MHz; timing weight 60 without the matrix, 38.8-40.1 MHz.
+With both decode fixes, the glue fix and the ramdisk (256 more block RAMs), constrained at 50 MHz instead of 35.7, the
+same flags reach 52.2 MHz (2026-10-15, `~/cdc6000-work/of7`): the constraint drives nextpnr's timing-driven placement, so
+the loose one understated what the flow can do.  That bitstream (`of_sb_newdb.bit`, assembled against the new database)
+has not been on the board.
 
 The dual-issue core's worst path under Vivado (34 levels, 84 % routing): a unit's operand register, the 18-bit add, the
 store address at the memory-queue head, the fetch-void check (a store this cycle to the word just fetched), parcel selection,
