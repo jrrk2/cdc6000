@@ -19,6 +19,17 @@ if '--nfs' in sys.argv:
 if '--shell' in sys.argv:       # --shell compiler-parmlist: boot into the shell (nfs/shell.pas); `compile` runs the compiler
     k = sys.argv.index('--shell'); SHELL = dict(l.split() for l in open(sys.argv[k + 1])); del sys.argv[k:k + 2]
 
+# --go: compile and go.  The compiler's output (the file PASCLGO) is kept in memory from STAGE up instead of being sent to the
+# host, and when the compiler stops without errors the run time loads it as the program, clears the memory and starts it.
+# --stage=ADDR (24576), --b4=LIMIT, the stack limit of the program (32512, for 32K words of memory), --ico=ADDR (2048), the
+# compiler's PARMLIST.ICO.
+GO = '--go' in sys.argv
+def opt(name, default):
+    return int(next((a.split('=')[1] for a in sys.argv if a.startswith('--%s=' % name)), default), 0)
+STAGE, GOB4, GOICO = opt('stage', '24576'), opt('b4', '32512'), opt('ico', '2048')
+if GO and NFS:
+    sys.exit('mkrt.py: --go is for the plain run time (no --nfs)')
+
 DC = {c: i + 1 for i, c in enumerate('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}
 DC.update({c: 27 + i for i, c in enumerate('0123456789')})
 DC.update({'+': 37, '-': 38, '*': 39, '/': 40, '(': 41, ')': 42, '$': 43, '=': 44, ' ': 45, ',': 46, '.': 47,
@@ -65,6 +76,10 @@ L('IO_TX = 17')
 L('IO_FILE = 18')
 L('IO_FWORD = 19')
 L('IO_HALT = 20')
+if GO:
+    L('STAGE = %d' % STAGE)
+    L('GOB4 = %d' % GOB4)
+    L('GOICO = %d' % GOICO)
 if NFS:
     L('MBA = %d' % (0o120000 + 0x1010))
     L('DRV_ENTRY = %d' % int(NFS['ENTRYPT']))
@@ -116,11 +131,111 @@ L('DIG: .word 0')
 for _ in range(24): L('.word 0')
 L('POW10:')
 for k in range(19): L('.word %d' % (10 ** k))
+if GO:
+    L('GOPTR: .word STAGE')       # next free word of the staged PASCLGO
+    L('GOOVF: .word 0')           # the output did not fit below GOB4
+    L('GOLP: .word 0')
+    L('GOLIM: .word 0')
+    L('GOJT: .word 0')
+    L('GOENT: .word 0')
+    L('PGLFN: .word %d' % lfn('PASCLGO'))
 
 L('.org 1000B')
 if not NFS:
     # ---- HALT ----
     L('HALT:')
+    if GO:
+        # the compiler (or the program it made) has stopped.  Stop for good unless a program was staged and the compile was clean.
+        L('  SA1 B0+GOPTR')
+        L('  SX2 B0+STAGE')
+        L('  IX3 X1-X2')                    # staged words
+        L('  ZR X3,HALT0')
+        L('  SA4 B0+GOOVF')
+        L('  NZ X4,GOBIG')
+        L('  SA4 B0+GOICO+2')               # PARMLIST.ERRFLAG
+        L('  NZ X4,HALT0')
+        L('  SA4 B0+GOICO+7')               # LOADPT
+        L('  SA5 B0+GOICO+8')               # LIMCODE
+        L('  IX6 X5-X4')
+        L('  SX0 B0+50')
+        L('  IX6 X6+X0')                    # the code, and the 50 words of jump table that follow it
+        L('  IX7 X6-X3')
+        L('  NZ X7,HALT0')                  # not the output of a finished compile
+        L('  SA2 B0+GOICO+9')               # LPJMPTAB
+        L('  SA3 B0+GOICO+11')              # ENTRYPT
+        L('  BX6 X4')
+        L('  SA6 B0+GOLP')
+        L('  BX6 X5')
+        L('  SA6 B0+GOLIM')
+        L('  BX6 X2')
+        L('  SA6 B0+GOJT')
+        L('  BX6 X3')
+        L('  SA6 B0+GOENT')
+        L('  SX6 B0+STAGE')                 # nothing staged any more: the program's own stop is the end
+        L('  SA6 B0+GOPTR')
+        # the memory below the staged words is the program's, zero as at power up
+        L('  BX6 X0-X0')
+        L('  SB2 B0+GOICO+1')
+        L('  SB3 B0+STAGE')
+        L('GOCL1:')
+        L('  SA6 B2+0')
+        L('  SB2 B2+1')
+        L('  NE B2,B3,GOCL1')
+        # the code words, LOADPT up to LIMCODE (with the jump table's place), then the jump table over its place
+        L('  SA1 B0+GOLP')
+        L('  SB2 X1+0')
+        L('  SA1 B0+GOLIM')
+        L('  SB4 X1+0')
+        L('  SB3 B0+STAGE')
+        L('GOCP1:')
+        L('  EQ B2,B4,GOCP1E')
+        L('  SA1 B3+0')
+        L('  BX6 X1')
+        L('  SA6 B2+0')
+        L('  SB2 B2+1')
+        L('  SB3 B3+1')
+        L('  JP GOCP1')
+        L('GOCP1E:')
+        L('  SA1 B0+GOJT')
+        L('  SB2 X1+0')
+        L('  SB4 B2+50')
+        L('GOCP2:')
+        L('  EQ B2,B4,GOCP2E')
+        L('  SA1 B3+0')
+        L('  BX6 X1')
+        L('  SA6 B2+0')
+        L('  SB2 B2+1')
+        L('  SB3 B3+1')
+        L('  JP GOCP2')
+        L('GOCP2E:')
+        # the staged words are not wanted now: the memory up to the stack limit is the program's too
+        L('  BX6 X0-X0')
+        L('  SB2 B0+STAGE')
+        L('  SB3 B0+GOB4')
+        L('GOCL2:')
+        L('  SA6 B2+0')
+        L('  SB2 B2+1')
+        L('  NE B2,B3,GOCL2')
+        # as the core starts a program: B5 = B6 = LIMCODE + 8, B4 the stack limit, X7 = 100B (the stop above), the rest zero
+        L('  SA1 B0+GOLIM')
+        L('  SB5 X1+8')
+        L('  SB6 B5+0')
+        L('  SB4 B0+GOB4')
+        L('  SA1 B0+GOENT')
+        L('  SB7 X1+0')
+        L('  BX0 X0-X0')
+        for k in range(1, 7):
+            L('  BX%d X0' % k)
+        L('  SX7 B0+64')
+        L('  SB1 B0+0')
+        L('  SB2 B0+0')
+        L('  SB3 B0+0')
+        L('  JP B7+0')
+        L('GOBIG:')
+        text('PROGRAM TOO LARGE')
+        L('  SX6 B0+0')
+        tx()
+        L('HALT0:')
     L('  SX6 B0+1')
     L('  SA6 B0+IO_HALT')
     L('HALT1:')
@@ -175,6 +290,10 @@ if not NFS:
     L('PUTB:')
     L('  SB1 B7+-1')
     L('  SA1 B1+2')
+    if GO:
+        L('  SA2 B0+PGLFN')
+        L('  BX3 X1-X2')
+        L('  ZR X3,PUTBG')                 # the compiler's output: kept here, not sent
     L('  BX6 X1')
     L('  SA6 B0+IO_FILE')
     L('  SA1 B1+1')
@@ -194,6 +313,35 @@ if not NFS:
     L('  SB3 B3+-1')
     L('  NE B3,B0,PUTB2')
     ret()
+    if GO:
+        L('PUTBG:')
+        L('  SA1 B1+1')
+        L('  MX3 5')
+        L('  BX2 -X3*X1')
+        L('  NZ X2,PUTBG1')
+        L('  SX2 B0+1')
+        L('PUTBG1:')
+        L('  SB3 X2+0')
+        L('  SA3 B1+0')
+        L('  SB2 X3+0')
+        L('  SA5 B0+GOPTR')
+        L('  SB1 X5+0')
+        L('PUTBG2:')
+        L('  SA4 B2+0')
+        L('  BX6 X4')
+        L('  SA6 B1+0')
+        L('  SB1 B1+1')
+        L('  SB2 B2+1')
+        L('  SB3 B3+-1')
+        L('  NE B3,B0,PUTBG2')
+        L('  SX6 B1+0')
+        L('  SA6 B0+GOPTR')
+        L('  SB2 B0+GOB4')
+        L('  LT B1,B2,PUTBG3')
+        L('  SX6 B0+1')
+        L('  SA6 B0+GOOVF')
+        L('PUTBG3:')
+        ret()
 
 
 # ---- OPN: set up the window pointer and the buffer pointers ----
